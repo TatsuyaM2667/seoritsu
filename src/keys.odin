@@ -124,6 +124,10 @@ cycle_tab :: proc(d: int) {
 
 on_key :: proc(ev: Ev) {
 	kev = ev
+	if menu.on {
+		menu.on = false
+		if ev.key == K_ESCAPE do return
+	}
 	b := cur_buf()
 	// popups that eat keys first
 	if app.mode == .Edit && app.comp_on && b != nil {

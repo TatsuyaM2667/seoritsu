@@ -11,7 +11,8 @@ extensions and Zed-downloaded language servers (see README.md). Build: `./build.
 - `src/wl.odin`, `src/draw.odin`, `src/font.odin` were copied from ~/AmeFileManger/src/gui (now independent).
 
 ## Debugging
-`SEORITSU_DUMP_CMD="<palette name>"` runs that command 2.5 s after start (screenshots of pickers etc.).
+`SEORITSU_DUMP_CMD="<palette name>"` runs that command 2.5 s after start (screenshots of pickers etc.);
+`menu:panel` / `menu:tab` / `menu:editor` open a right-click menu instead.
 Tests: `./build.sh test` (single-threaded: tests share `app`; reset globals that hold a previous test's allocator).
 
 ## Status (batch 2 done)

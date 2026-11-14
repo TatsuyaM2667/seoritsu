@@ -7,7 +7,6 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-import "core:sys/posix"
 import "core:time"
 
 git_branch: string
@@ -336,25 +335,13 @@ terminal_app :: proc() -> string {
 	return ""
 }
 
-open_terminal :: proc() {
+open_terminal :: proc(dir := "") {
 	term := terminal_app()
 	if term == "" {
 		toast("ターミナルアプリが見つかりません")
 		return
 	}
-	argv := []cstring{strings.clone_to_cstring(term, context.temp_allocator), nil}
-	cwd := strings.clone_to_cstring(project_root, context.temp_allocator)
-	// double fork: the terminal outlives us and never becomes a zombie
-	pid := posix.fork()
-	if pid == 0 {
-		posix.setsid()
-		if posix.fork() == 0 {
-			posix.chdir(cwd)
-			posix.execv(argv[0], raw_data(argv))
-		}
-		posix._exit(0)
-	}
-	if pid > 0 do posix.waitpid(pid, nil, {})
+	spawn_detached({term}, dir if dir != "" else project_root)
 }
 
 choose_terminal :: proc() {

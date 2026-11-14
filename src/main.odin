@@ -573,6 +573,29 @@ on_mouse :: proc(ev: Ev) {
 		}
 	case .Down:
 		app.hover = ""
+		if menu_click(x, y) do return
+		if ev.button == 1 && contains(app.status, x, y) {
+			status_click(x, y)
+			return
+		}
+		if ev.button == 3 && app.mode == .Edit {
+			if app.panel_on && contains(app.panel, x, y) {
+				app.panel_focus = true
+				panel_menu(x, y, int((y - app.panel.y - PANEL_TOP * S + app.panel_scroll) / (PANEL_ROW * S)) if y > app.panel.y + PANEL_TOP * S else -1)
+			} else if contains(app.tabbar, x, y) {
+				if i, _, ok := tab_at(x); ok do tab_menu(x, y, i)
+			} else if b != nil && contains(app.text, x, y) {
+				app.panel_focus = false
+				p := pos_at(b, x, y)
+				lo, hi := order(b.anchor, b.cur)
+				if !has_sel(b) || lt(p, lo) || lt(hi, p) { // keep a selection the click is inside
+					clear(&b.extra)
+					b.cur, b.anchor = p, p
+				}
+				editor_menu(x, y)
+			}
+			return
+		}
 		if app.mode == .Picker {
 			if r, ok := picker_row_at(x, y); ok do picker_choose(r)
 			else do app.mode = .Edit
@@ -1095,9 +1118,11 @@ draw_status :: proc() {
 	r := app.status
 	fill(r, col("status_bar.background"))
 	fill({0, r.y, r.w, 1}, col("border"))
+	clear(&status_buttons)
 	bl := baseline(r, app.ui - 1)
 	sz := app.ui - i32(S)
-	x := 12 * S
+	x := 6 * S
+	x += status_button(x, 0xf0c9, "", col("text.accent") if app.panel_on else col("text.muted"), proc() {app.panel_on = !app.panel_on; app.panel_focus = false}) + 6 * S
 	b := cur_buf()
 	if b != nil {
 		errs, warns := 0, 0
@@ -1105,12 +1130,9 @@ draw_status :: proc() {
 			if d.severity == 1 do errs += 1
 			if d.severity == 2 do warns += 1
 		}
-		draw_glyph_c(x, bl, 0xf057, sz, col("error") if errs > 0 else col("text.muted"))
-		x += 18 * S + text(x + 18 * S, bl, fmt.tprint(errs), sz, col("text.muted"))
-		x += 12 * S
-		draw_glyph_c(x, bl, 0xf071, sz, col("warning") if warns > 0 else col("text.muted"))
-		x += 18 * S + text(x + 18 * S, bl, fmt.tprint(warns), sz, col("text.muted"))
-		x += 20 * S
+		diag_open :: proc() {if b := cur_buf(); b != nil do diagnostics_picker(b)}
+		x += status_button(x, 0xf057, fmt.tprint(errs), col("error") if errs > 0 else col("text.muted"), diag_open)
+		x += status_button(x, 0xf071, fmt.tprint(warns), col("warning") if warns > 0 else col("text.muted"), diag_open) + 14 * S
 		if b.lang != nil && len(b.lang.servers) > 0 {
 			name := b.lang.servers[0]
 			s := servers[name] if name in servers else nil
@@ -1119,8 +1141,16 @@ draw_status :: proc() {
 			label := name if state == "" else fmt.tprintf("%s · %s", name, state)
 			x += text(x, bl, label, sz, col("text.muted")) + 20 * S
 		}
-		right := fmt.tprintf("Ln %d, Col %d    %s", b.cur.line + 1, utf8.rune_count(b.lines[b.cur.line][:b.cur.col]) + 1, b.lang.name if b.lang != nil else "Plain Text")
-		text(r.w - 14 * S - f32(text_width(right, sz, true)), bl, right, sz, col("text.muted"))
+	}
+	rx := r.w - 6 * S
+	rx -= status_button(rx, 0xf120, "", col("text.muted"), proc() {open_terminal()}, right = true) + 4 * S
+	if b != nil {
+		lang := b.lang.name if b.lang != nil else "Plain Text"
+		rx -= f32(text_width(lang, sz, true)) + 10 * S
+		text(rx, bl, lang, sz, col("text.muted"))
+		rx -= 10 * S
+		lc := fmt.tprintf("Ln %d, Col %d", b.cur.line + 1, utf8.rune_count(b.lines[b.cur.line][:b.cur.col]) + 1)
+		status_button(rx, 0, lc, {}, proc() {if b := cur_buf(); b != nil do start_input(b, .Line)}, right = true)
 	}
 	if app.toast != "" && ticks_ms() < app.toast_until do text(x, bl, app.toast, sz, col("text.accent"))
 }
@@ -1215,6 +1245,7 @@ frame :: proc() {
 	draw_signature()
 	draw_inputbar()
 	draw_picker()
+	draw_menu()
 }
 
 dump_frame :: proc(path: string) {
@@ -1273,6 +1304,12 @@ main :: proc() {
 			dirty = true
 		}
 		if dump_cmd != "" && now > 2500 {
+			// debug: "menu:panel" / "menu:tab" / "menu:editor" open that right-click menu
+			switch dump_cmd {
+			case "menu:panel": panel_menu(app.panel.x + 60 * app.S, app.panel.y + 40 * app.S, 1)
+			case "menu:tab": if len(app.bufs) > 0 do tab_menu(app.tabbar.x + 40 * app.S, app.tabbar.y + 30 * app.S, 0)
+			case "menu:editor": if cur_buf() != nil do editor_menu(app.text.x + 200 * app.S, app.text.y + 100 * app.S)
+			}
 			for c in COMMANDS do if c.name == dump_cmd {
 				run_cmd(c)
 				break

@@ -60,3 +60,13 @@ panel_file_ops :: proc(t: ^testing.T) {
 	testing.expect(t, os.exists(pj(root, "data/Trash/files/c.txt")) && os.exists(pj(root, "data/Trash/info/c.txt.trashinfo")), "in trash with info")
 	os.remove_all(root)
 }
+
+// Menu items without a command must not fall back to COMMANDS[0] (it opens the file picker).
+@(test)
+menu_items_dispatch :: proc(t: ^testing.T) {
+	plain := Menu_Item{label = "閉じる", key = "Ctrl+W", run = proc() {}}
+	testing.expect_value(t, plain.cmd, 0)
+	testing.expect_value(t, item_key(plain), "Ctrl+W")
+	c := cmd_item("コピー")
+	testing.expect(t, c.cmd > 0 && COMMANDS[c.cmd - 1].name == "コピー", "cmd_item points at its command")
+}

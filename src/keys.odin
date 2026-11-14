@@ -48,6 +48,11 @@ COMMANDS := [?]Cmd {
 	{"git: プッシュ", 0, {}, proc(b: ^Buffer) {git_push()}, false},
 	{"git: プル", 0, {}, proc(b: ^Buffer) {git_pull()}, false},
 	{"ミニマップの表示切替", 'm', {.Ctrl, .Alt}, proc(b: ^Buffer) {app.minimap = !app.minimap}, false},
+	{"折り返しの切替", 'z', {.Alt}, proc(b: ^Buffer) {app.wrap = !app.wrap; if b != nil do ensure_visible(b)}, false},
+	{"折りたたむ", '{', {.Ctrl, .Shift}, proc(b: ^Buffer) {fold_here(b)}, true},
+	{"展開する", '}', {.Ctrl, .Shift}, proc(b: ^Buffer) {unfold_here(b)}, true},
+	{"すべて折りたたむ", 0, {}, proc(b: ^Buffer) {fold_all(b); ensure_visible(b)}, true},
+	{"すべて展開する", 0, {}, proc(b: ^Buffer) {unfold_all(b)}, true},
 	{"文字を大きく", '=', {.Ctrl}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
 	{"文字を大きく", '+', {.Ctrl, .Shift}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
 	{"文字を小さく", '-', {.Ctrl}, proc(b: ^Buffer) {zed.font_size = max(zed.font_size - 1, 8)}, false},
@@ -206,12 +211,7 @@ ktext: string
 // One caret's reaction to a navigation / editing key (kev).
 caret_key :: proc(b: ^Buffer) {
 	ctrl, shift := .Ctrl in kev.mods, .Shift in kev.mods
-	want := b.want_x if b.want_x >= 0 else x_in_line(b, b.cur.line, b.cur.col)
-	vert :: proc(b: ^Buffer, line: int, want: f32, shift: bool) {
-		line := clamp(line, 0, len(b.lines) - 1)
-		go(b, {line, col_at_x(b, line, want)}, shift, keep_x = true)
-		b.want_x = want
-	}
+
 	a, z := order(b.anchor, b.cur)
 	switch kev.key {
 	case K_LEFT:
@@ -224,14 +224,14 @@ caret_key :: proc(b: ^Buffer) {
 		go(b, p, shift)
 	case K_UP:
 		if ctrl do b.scroll_y = max(b.scroll_y - 1, 0)
-		else do vert(b, b.cur.line - 1, want, shift)
+		else do vert_rows(b, -1, shift)
 	case K_DOWN:
-		if ctrl do b.scroll_y = min(b.scroll_y + 1, f32(len(b.lines) - 1))
-		else do vert(b, b.cur.line + 1, want, shift)
+		if ctrl do b.scroll_y = min(b.scroll_y + 1, f32(max(row_count(b) - 1, 0)))
+		else do vert_rows(b, 1, shift)
 	case K_PAGEUP:
-		vert(b, b.cur.line - int(rows()) + 2, want, shift)
+		vert_rows(b, -(int(rows()) - 2), shift)
 	case K_PAGEDOWN:
-		vert(b, b.cur.line + int(rows()) - 2, want, shift)
+		vert_rows(b, int(rows()) - 2, shift)
 	case K_HOME:
 		if ctrl do go(b, {}, shift)
 		else {
@@ -480,7 +480,7 @@ submit_input :: proc(b: ^Buffer, mods: Mods) {
 		}
 		if c > 1 || col_ > 0 do col_ = min(next_col(b, {line, col_}).col, len(b.lines[line]))
 		go(b, {line, col_}, false)
-		b.scroll_y = max(f32(line) - rows() / 3, 0)
+		scroll_center(b, b.cur)
 	case .Rename:
 		app.mode = .Edit
 		if b != nil && q != "" do lsp_rename(b, app.rename_pos, q)

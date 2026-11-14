@@ -36,6 +36,10 @@ recent projects (~/.local/state/seoritsu/recent; switching re-execs /proc/self/e
 git branch/commit/push/pull (synchronous), generic `.Prompt` input mode, extra edit commands.
 Dump runs: set XDG_STATE_HOME to a scratch dir so they don't touch the user's recent list / terminal choice.
 
+## View (src/view.odin)
+Display rows: b.disp maps row -> (line, c0) only when soft wrap (Alt+Z) or folds are on; scroll_y counts rows.
+Use row_of / row_info / y_of / vert_rows instead of line arithmetic. Folds are indent-based, dropped when edited inside.
+
 ## Ideas not done yet
-Embedded terminal pane, split panes, code folding, vim mode, completion with several carets, codeAction/resolve,
+Split panes and embedded terminal (next), wrap/fold not yet checked on screen, vim mode, completion with several carets, codeAction/resolve,
 damage-tracked partial redraw.

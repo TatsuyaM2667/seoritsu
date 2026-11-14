@@ -42,6 +42,7 @@ zed: struct {
 	format_save:  bool,
 	inline_diag:  bool,
 	inlay_hints:  bool,
+	soft_wrap:    bool,
 }
 
 theme: map[string]Color
@@ -192,6 +193,9 @@ zed_load :: proc() {
 	if f := str(obj(s, "format_on_save")); f != "" do zed.format_save = f != "off"
 	if b, ok := obj(obj(obj(s, "diagnostics"), "inline"), "enabled").(json.Boolean); ok do zed.inline_diag = b
 	if b, ok := obj(obj(s, "inlay_hints"), "enabled").(json.Boolean); ok do zed.inlay_hints = b
+	switch str(obj(s, "soft_wrap")) {
+	case "editor_width", "bounded", "preferred_line_length": zed.soft_wrap = true
+	}
 
 	if ov, ok := obj(s, "experimental.theme_overrides").(json.Object); ok {
 		for k, v in ov {

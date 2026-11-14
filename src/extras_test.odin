@@ -112,3 +112,20 @@ security_helpers :: proc(t: ^testing.T) {
 	os.set_working_directory(old_wd)
 	os.remove_all(dir)
 }
+
+@(test)
+folding_rows :: proc(t: ^testing.T) {
+	b := ebuf("a {\n\tb\n\tc\n}\nd")
+	app.wrap = false
+	testing.expect(t, foldable(b, 0), "indented block below")
+	testing.expect(t, add_fold(b, 0), "fold")
+	testing.expect_value(t, row_count(b), 3) // "a {", "}", "d"
+	l, _, _ := row_info(b, 1)
+	testing.expect_value(t, l, 3)
+	testing.expect_value(t, row_of(b, {2, 0}), 0) // hidden line maps to the header
+	replace(b, {4, 0}, {4, 0}, "x\n", record = false) // edit below: fold stays
+	testing.expect_value(t, len(b.folds), 1)
+	replace(b, {1, 1}, {1, 1}, "z", record = false) // edit inside: fold opens
+	testing.expect_value(t, len(b.folds), 0)
+	testing.expect_value(t, row_count(b), 6)
+}

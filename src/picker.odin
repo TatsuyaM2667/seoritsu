@@ -193,7 +193,7 @@ jump :: proc(l: Loc) {
 	b.cur = clamp_pos(b, l.pos)
 	b.anchor = b.cur
 	clear(&b.extra)
-	if f32(b.cur.line) < b.scroll_y || f32(b.cur.line) > b.scroll_y + rows() - 2 do b.scroll_y = max(f32(b.cur.line) - rows() / 3, 0)
+	scroll_center(b, b.cur)
 }
 
 nav_back :: proc() {

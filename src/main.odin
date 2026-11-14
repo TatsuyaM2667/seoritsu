@@ -74,6 +74,8 @@ app: struct {
 	sig:                     string, // signature help shown above the caret
 	sig_line:                int,
 	minimap:                 bool,
+	text_focus:              bool, // this pane's caret is the live one (set per pane while drawing)
+	wrap:                    bool, // soft wrap (Zed's soft_wrap, Alt+Z)
 	minimap_drag:            bool,
 	session_dirty:           bool,
 	close_armed:             ^Buffer,
@@ -130,7 +132,7 @@ goto_location :: proc(path: string, line, col: int, utf16: bool) {
 	clear(&b.extra)
 	p := from_lsp_col(b, line, col, utf16)
 	b.cur, b.anchor = p, p
-	b.scroll_y = max(f32(p.line) - rows() / 3, 0)
+	scroll_center(b, b.cur)
 	app.hover = ""
 }
 
@@ -321,14 +323,19 @@ col_at_x :: proc(b: ^Buffer, line: int, x: f32) -> int {
 }
 
 pos_at :: proc(b: ^Buffer, x, y: f32) -> Pos {
-	line := clamp(int(math.floor((y - app.text.y) / app.line_h + b.scroll_y)), 0, len(b.lines) - 1)
-	return {line, col_at_x(b, line, x - app.text.x + b.scroll_x)}
+	r := clamp(int(math.floor((y - app.text.y) / app.line_h + b.scroll_y)), 0, row_count(b) - 1)
+	return col_on_row(b, r, x - app.text.x + b.scroll_x)
 }
 
 ensure_visible :: proc(b: ^Buffer) {
-	l := f32(b.cur.line)
+	unfold_at(b, b.cur) // a caret never hides inside a fold
+	l := f32(row_of(b, b.cur))
 	if l < b.scroll_y do b.scroll_y = l
 	if l > b.scroll_y + rows() - 2 do b.scroll_y = l - rows() + 2
+	if app.wrap {
+		b.scroll_x = 0
+		return
+	}
 	cx := x_in_line(b, b.cur.line, b.cur.col)
 	if cx - b.scroll_x > app.text.w - 3 * app.cell_w do b.scroll_x = cx - app.text.w + 6 * app.cell_w
 	if cx < b.scroll_x do b.scroll_x = max(cx - 6 * app.cell_w, 0)
@@ -351,7 +358,7 @@ layout :: proc() {
 	app.editor = {pw, top, app.W - pw, app.H - top - status_h}
 	digits := 3
 	if b := cur_buf(); b != nil do digits = max(len(fmt.tprint(len(b.lines))), 3)
-	gw := f32(digits + 3) * app.cell_w
+	gw := f32(digits + 4) * app.cell_w // number, diagnostic dot, fold chevron
 	app.gutter = {app.editor.x, app.editor.y, gw, app.editor.h}
 	app.text = {app.editor.x + gw + math.round(6 * S), app.editor.y, app.editor.w - gw - math.round(6 * S) - minimap_w(), app.editor.h}
 }
@@ -573,7 +580,7 @@ on_mouse :: proc(ev: Ev) {
 			app.panel_scroll = max(app.panel_scroll - ev.wheel * 3 * PANEL_ROW * S, 0)
 		} else if b != nil {
 			if .Shift in ev.mods do b.scroll_x = max(b.scroll_x - ev.wheel * 6 * app.cell_w, 0)
-			else do b.scroll_y = clamp(b.scroll_y - ev.wheel * 3, 0, f32(len(b.lines) - 1))
+			else do b.scroll_y = clamp(b.scroll_y - ev.wheel * 3, 0, f32(max(row_count(b) - 1, 0)))
 			app.hover = ""
 		}
 	case .Down:
@@ -639,6 +646,14 @@ on_mouse :: proc(ev: Ev) {
 		}
 		app.panel_focus = false
 		if b == nil || !contains(app.editor, x, y) || ev.button != 1 do return
+		// fold chevron column at the right of the gutter
+		if contains(app.gutter, x, y) && x > app.gutter.x + app.gutter.w - 1.8 * app.cell_w {
+			l, c0, _ := row_info(b, int(math.floor((y - app.text.y) / app.line_h + b.scroll_y)))
+			if c0 == 0 && (fold_at_line(b, l) >= 0 || foldable(b, l)) {
+				toggle_fold_line(b, l)
+				return
+			}
+		}
 		if app.minimap && x > app.text.x + app.text.w - minimap_w() {
 			minimap_click(b, y)
 			app.minimap_drag = true
@@ -849,17 +864,23 @@ draw_editor :: proc() {
 		reset_clip()
 		return
 	}
+	disp_update(b)
+	if app.wrap do b.scroll_x = 0
+	clamp_scroll(b)
 	asc, desc := font_metrics(app.fs)
 	base_off := math.round((app.line_h + f32(asc - desc)) / 2)
+	total_rows := row_count(b)
 	first := int(b.scroll_y)
 	y0 := app.text.y - (b.scroll_y - f32(first)) * app.line_h
 	nrows := int(rows()) + 2
-	ts_prepare(b, first, first + nrows)
+	first_line, _, _ := row_info(b, first)
+	last_line, _, _ := row_info(b, first + nrows)
+	ts_prepare(b, first_line, last_line + 1)
 	defer b.ts_lo, b.ts_hi = 0, 0 // ts_lines lives in the frame's temp memory
 	sa, sz := order(b.anchor, b.cur)
 	tabw := f32(b.tab_size) * app.cell_w
 	needle := strings.to_lower(string(app.input[:]), context.temp_allocator) if app.mode == .Find || app.mode == .Replace else ""
-	in_block := block_state(b, min(first, len(b.lines) - 1))
+	in_block := block_state(b, min(first_line, len(b.lines) - 1))
 	cur_ind := len(indent_of(b, b.cur.line))
 	// every caret as an ordered (start, end) pair
 	sels := make([dynamic][2]Pos, context.temp_allocator)
@@ -881,42 +902,60 @@ draw_editor :: proc() {
 	}
 	br_a, br_z, br_ok := bracket_pair(b)
 	gi := 0
+	gutter_hot := contains(app.gutter, app.mx, app.my)
+	styles: []Style
+	prev_line := -1
 
 	for k in 0 ..< nrows {
-		l := first + k
-		if l >= len(b.lines) do break
+		row := first + k
+		if row >= total_rows do break
+		l, c0, c1 := row_info(b, row)
+		head, tail := c0 == 0, c1 >= len(b.lines[l]) // first / last piece of a wrapped line
 		y := y0 + f32(k) * app.line_h
 		by := y + base_off
 		s := line_str(b, l)
-		tx := app.text.x - b.scroll_x
+		tx := app.text.x - b.scroll_x - (x_in_line(b, l, c0) if c0 > 0 else 0)
+		in_row :: proc(p: Pos, l, c0, c1: int, tail: bool) -> bool {return p.line == l && p.col >= c0 && (p.col < c1 || (tail && p.col == c1))}
+		if l != prev_line {
+			if l != prev_line + 1 do in_block = block_state(b, l) // a fold skipped lines
+			styles = lex_line(b, l, &in_block)
+			prev_line = l
+		}
 		// gutter
 		set_clip(app.gutter)
-		num := fmt.tprint(l + 1)
-		nc := col("editor.active_line_number") if l == b.cur.line else col("editor.line_number")
-		text(app.gutter.x + app.gutter.w - 2 * app.cell_w - f32(text_width(num, app.fs, false)), by, num, app.fs, nc, false)
-		worst := 5
-		for d in b.diags do if d.a.line == l do worst = min(worst, d.severity)
-		if worst < 5 do rrect({app.gutter.x + app.gutter.w - 1.4 * app.cell_w, y + app.line_h / 2 - 3 * S, 6 * S, 6 * S}, 3 * S, diag_color(worst))
-		// git: added / modified bar, deleted wedge
-		for gi < len(b.git) && int(b.git[gi].line) < l do gi += 1
-		for g := gi; g < len(b.git) && int(b.git[g].line) == l; g += 1 {
-			switch b.git[g].kind {
-			case .Added: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("created"))
-			case .Modified: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("modified"))
-			case .Deleted: rrect({app.gutter.x, y - 3 * S, 7 * S, 6 * S}, 3 * S, col("deleted"))
+		if head {
+			num := fmt.tprint(l + 1)
+			nc := col("editor.active_line_number") if l == b.cur.line else col("editor.line_number")
+			text(app.gutter.x + app.gutter.w - 3 * app.cell_w - f32(text_width(num, app.fs, false)), by, num, app.fs, nc, false)
+			worst := 5
+			for d in b.diags do if d.a.line == l do worst = min(worst, d.severity)
+			if worst < 5 do rrect({app.gutter.x + app.gutter.w - 2.4 * app.cell_w, y + app.line_h / 2 - 3 * S, 6 * S, 6 * S}, 3 * S, diag_color(worst))
+			// fold chevron: always when folded, on hover when foldable
+			folded := fold_at_line(b, l) >= 0
+			if folded || (gutter_hot && foldable(b, l)) {
+				draw_glyph_c(app.gutter.x + app.gutter.w - 1.3 * app.cell_w, by, 0xf054 if folded else 0xf078, app.fs - 4 * i32(S), col("text.accent") if folded else col("text.muted"))
+			}
+			// git: added / modified bar, deleted wedge
+			for gi < len(b.git) && int(b.git[gi].line) < l do gi += 1
+			for g := gi; g < len(b.git) && int(b.git[g].line) == l; g += 1 {
+				switch b.git[g].kind {
+				case .Added: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("created"))
+				case .Modified: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("modified"))
+				case .Deleted: rrect({app.gutter.x, y - 3 * S, 7 * S, 6 * S}, 3 * S, col("deleted"))
+				}
 			}
 		}
 
 		set_clip(app.text)
-		for c in sels do if c[0] == c[1] && c[1].line == l {
+		for c in sels do if c[0] == c[1] && in_row(c[1], l, c0, c1, tail) {
 			fill({app.text.x, y, app.text.w, app.line_h}, col("editor.active_line.background"))
 			break
 		}
 		// selections
 		for c in sels {
-			if c[0] == c[1] || lt(c[1], Pos{l, 0}) || lt(Pos{l, len(s)}, c[0]) do continue
-			x0 := x_in_line(b, l, c[0].col) if c[0].line == l else 0
-			x1 := x_in_line(b, l, c[1].col) if c[1].line == l else x_in_line(b, l, len(s)) + app.cell_w / 2
+			if c[0] == c[1] || lt(c[1], Pos{l, c0}) || lt(Pos{l, c1}, c[0]) do continue
+			x0 := x_in_line(b, l, c[0].col) if in_row(c[0], l, c0, c1, tail) else x_in_line(b, l, c0)
+			x1 := x_in_line(b, l, c[1].col) if in_row(c[1], l, c0, c1, tail) else x_in_line(b, l, c1) + (app.cell_w / 2 if tail else 0)
 			rrect({tx + x0, y, x1 - x0, app.line_h}, 3 * S, col("selection"))
 		}
 		// same word elsewhere
@@ -928,7 +967,7 @@ draw_editor :: proc() {
 				a := from + j
 				e := a + len(same)
 				whole := (a == 0 || !is_word_byte(s[a - 1])) && (e >= len(s) || !is_word_byte(s[e]))
-				if whole && !(l == sa.line && a == sa.col && has_sel(b)) {
+				if whole && a >= c0 && a < c1 && !(l == sa.line && a == sa.col && has_sel(b)) {
 					x0, x1 := x_in_line(b, l, a), x_in_line(b, l, e)
 					rrect({tx + x0, y + 1, x1 - x0, app.line_h - 2}, 3 * S, col("editor.document_highlight.read_background"))
 				}
@@ -937,7 +976,7 @@ draw_editor :: proc() {
 		}
 		// matching brackets
 		if br_ok {
-			for p in ([2]Pos{br_a, br_z}) do if p.line == l {
+			for p in ([2]Pos{br_a, br_z}) do if p.line == l && p.col >= c0 && p.col < c1 {
 				x0 := x_in_line(b, l, p.col)
 				rrect({tx + x0, y + 1, f32(get_glyph(rune(s[p.col]), app.fs).adv), app.line_h - 2}, 3 * S, col("accent"), max(S, 1))
 			}
@@ -950,14 +989,16 @@ draw_editor :: proc() {
 				j := strings.index(low[from:], needle)
 				if j < 0 do break
 				a := from + j
-				x0, x1 := x_in_line(b, l, a), x_in_line(b, l, a + len(needle))
-				rrect({tx + x0, y + 1, x1 - x0, app.line_h - 2}, 3 * S, col("editor.document_highlight.read_background"))
+				if a >= c0 && a < c1 {
+					x0, x1 := x_in_line(b, l, a), x_in_line(b, l, a + len(needle))
+					rrect({tx + x0, y + 1, x1 - x0, app.line_h - 2}, 3 * S, col("editor.document_highlight.read_background"))
+				}
 				from = a + len(needle)
 			}
 		}
 		// indent guides
 		ind := indent_of(b, l)
-		if len(ind) > 0 {
+		if head && len(ind) > 0 {
 			iw := x_in_line(b, l, len(ind))
 			for gx := f32(0); gx < iw; gx += tabw {
 				active := l != b.cur.line && cur_ind > 0 && gx + tabw >= x_in_line(b, b.cur.line, cur_ind) && gx < x_in_line(b, b.cur.line, cur_ind)
@@ -965,7 +1006,6 @@ draw_editor :: proc() {
 			}
 		}
 		// text
-		styles := lex_line(b, l, &in_block)
 		x: f32
 		hs := hints_of(b, l)
 		draw_hint :: proc(h: Hint, tx, x, y, by: f32) -> f32 {
@@ -976,29 +1016,46 @@ draw_editor :: proc() {
 			return w
 		}
 		for r, i in s {
+			if i >= c1 do break
 			for len(hs) > 0 && int(hs[0].col) <= i {
-				if int(hs[0].col) == i do x += draw_hint(hs[0], tx, x, y, by)
+				if int(hs[0].col) == i {
+					if i >= c0 do x += draw_hint(hs[0], tx, x, y, by)
+					else do x += hint_w(hs[0])
+				}
 				hs = hs[1:]
 			}
 			if r == '\t' {
 				x = (math.floor(x / tabw) + 1) * tabw
 				continue
 			}
-			if tx + x > app.text.x + app.text.w do break
 			adv := f32(get_glyph(r, app.fs).adv)
+			if i < c0 {
+				x += adv
+				continue
+			}
+			if tx + x > app.text.x + app.text.w do break
 			if tx + x + adv >= app.text.x && r != ' ' do glyph(i32(tx + x), i32(by), r, app.fs, syntax[styles[i]])
 			x += adv
 		}
-		for h in hs do if int(h.col) >= len(s) do x += draw_hint(h, tx, x, y, by)
+		if tail {
+			for h in hs do if int(h.col) >= len(s) do x += draw_hint(h, tx, x, y, by)
+			x = max(x, x_in_line(b, l, len(s)))
+			// folded block: a pill after the header line
+			if fold_at_line(b, l) >= 0 {
+				pw := f32(text_width("⋯", app.fs)) + 12 * S
+				rrect({tx + x + app.cell_w, y + 3 * S, pw, app.line_h - 6 * S}, 4 * S, col("element.hover"))
+				text(tx + x + app.cell_w + 6 * S, by, "⋯", app.fs, col("text.muted"))
+			}
+		}
 		// diagnostics: squiggles and the first message inline
 		shown_msg := false
 		for d in b.diags {
-			if d.a.line > l || d.b.line < l do continue
-			x0 := x_in_line(b, l, d.a.col) if d.a.line == l else 0
-			x1 := x_in_line(b, l, d.b.col) if d.b.line == l else x
+			if lt(d.b, Pos{l, c0}) || lt(Pos{l, c1}, d.a) do continue
+			x0 := x_in_line(b, l, d.a.col) if in_row(d.a, l, c0, c1, tail) else x_in_line(b, l, c0)
+			x1 := x_in_line(b, l, d.b.col) if in_row(d.b, l, c0, c1, tail) else x_in_line(b, l, c1)
 			if x1 <= x0 do x1 = x0 + app.cell_w
 			wave(tx + x0, tx + x1, y + app.line_h - 3 * S, diag_color(d.severity))
-			if zed.inline_diag && !shown_msg && d.a.line == l {
+			if zed.inline_diag && !app.wrap && !shown_msg && d.a.line == l && tail {
 				shown_msg = true
 				msg, _ := strings.replace_all(d.message, "\n", "  ", context.temp_allocator)
 				c := diag_color(d.severity)
@@ -1007,10 +1064,10 @@ draw_editor :: proc() {
 		}
 	}
 	// cursor + IME preedit
-	if b.cur.line >= first && b.cur.line < first + nrows {
+	if cr := row_of(b, b.cur); cr >= first && cr < first + nrows {
 		set_clip(app.text)
-		cx := app.text.x - b.scroll_x + x_in_line(b, b.cur.line, b.cur.col)
-		cy := y0 + f32(b.cur.line - first) * app.line_h
+		cx := app.text.x - b.scroll_x + row_x(b, b.cur)
+		cy := y0 + f32(cr - first) * app.line_h
 		if app.preedit != "" {
 			w := f32(text_width(app.preedit, app.fs))
 			fill({cx, cy, w, app.line_h}, col("elevated_surface.background"))
@@ -1018,26 +1075,27 @@ draw_editor :: proc() {
 			fill({cx, cy + app.line_h - 2 * S, w, max(S, 1)}, col("accent"))
 			cx += w
 		}
-		fill({cx, cy + 2 * S, max(2 * S, 2), app.line_h - 4 * S}, col("cursor"))
+		if app.text_focus do fill({cx, cy + 2 * S, max(2 * S, 2), app.line_h - 4 * S}, col("cursor"))
 		for e in b.extra {
-			if e[1].line < first || e[1].line >= first + nrows do continue
-			ex := app.text.x - b.scroll_x + x_in_line(b, e[1].line, e[1].col)
-			fill({ex, y0 + f32(e[1].line - first) * app.line_h + 2 * S, max(2 * S, 2), app.line_h - 4 * S}, col("cursor"))
+			er := row_of(b, e[1])
+			if er < first || er >= first + nrows do continue
+			ex := app.text.x - b.scroll_x + row_x(b, e[1])
+			fill({ex, y0 + f32(er - first) * app.line_h + 2 * S, max(2 * S, 2), app.line_h - 4 * S}, col("cursor"))
 		}
-		plat_text_input(app.mode == .Edit, {i32(cx / S), i32(cy / S), i32(2), i32(app.line_h / S)})
+		if app.text_focus do plat_text_input(app.mode == .Edit, {i32(cx / S), i32(cy / S), i32(2), i32(app.line_h / S)})
 	}
 	reset_clip()
 	draw_minimap(b)
 	// scrollbar
-	total := f32(len(b.lines)) + rows() - 1
-	if f32(len(b.lines)) > rows() {
+	total := f32(total_rows) + rows() - 1
+	if f32(total_rows) > rows() {
 		th := max(app.text.h * rows() / total, 24 * S)
 		ty := app.text.y + (app.text.h - th) * b.scroll_y / (total - rows())
 		rrect({app.text.x + app.text.w - 10 * S, ty, 7 * S, th}, 3.5 * S, col("scrollbar.thumb.background"))
 	}
 	// diagnostic marks on the scrollbar track
 	for d in b.diags {
-		my := app.text.y + app.text.h * f32(d.a.line) / max(f32(len(b.lines)), 1)
+		my := app.text.y + app.text.h * f32(row_of(b, d.a)) / max(f32(total_rows), 1)
 		fill({app.text.x + app.text.w - 4 * S, my, 3 * S, max(2 * S, 2)}, diag_color(d.severity))
 	}
 }
@@ -1164,7 +1222,7 @@ comp_rect :: proc() -> Rect {
 	n := min(len(app.shown), 10)
 	w := 420 * S
 	cx := app.text.x - b.scroll_x + x_in_line(b, b.cur.line, b.cur.col)
-	cy := app.text.y + (f32(b.cur.line) - b.scroll_y + 1) * app.line_h + 4 * S
+	cy := y_of(b, b.cur) + app.line_h + 4 * S
 	h := f32(n) * app.line_h + 8 * S
 	if cy + h > app.editor.y + app.editor.h do cy -= h + app.line_h + 8 * S
 	return {min(cx, app.W - w - 8 * S), cy, w, h}
@@ -1215,8 +1273,8 @@ draw_hover :: proc() {
 	h := f32(len(lines)) * lh + 16 * S
 	p := app.hover_pos
 	x := app.text.x - b.scroll_x + x_in_line(b, p.line, p.col)
-	y := app.text.y + (f32(p.line) - b.scroll_y) * app.line_h - h - 6 * S
-	if y < app.editor.y do y = app.text.y + (f32(p.line) - b.scroll_y + 1) * app.line_h + 6 * S
+	y := y_of(b, p) - h - 6 * S
+	if y < app.editor.y do y = y_of(b, p) + app.line_h + 6 * S
 	r := Rect{clamp(x, 4 * S, app.W - w - 4 * S), y, w, h}
 	popup(r)
 	set_clip(shrink(r, 8 * S))
@@ -1231,6 +1289,7 @@ frame :: proc() {
 	clear_canvas({}) // fully transparent: each region paints its own translucent color
 	layout()
 	clear(&status_buttons) // re-registered by whatever draws them this frame
+	app.text_focus = true
 	draw_editor()
 	draw_titlebar()
 	draw_tabbar()
@@ -1265,6 +1324,7 @@ main :: proc() {
 		os.exit(1)
 	}
 	app.running, app.S, app.panel_on = true, 1, true
+	app.wrap = zed.soft_wrap
 	project_root = os.get_working_directory(context.allocator) or_else "/"
 	open_list: [dynamic]string
 	for a in os.args[1:] {

@@ -90,7 +90,8 @@ session_restore :: proc() {
 		sy, _ := strconv.parse_int(f[2])
 		b.cur = clamp_pos(b, {ln, cl})
 		b.anchor = b.cur
-		b.scroll_y = f32(clamp(sy, 0, len(b.lines) - 1))
+		b.scroll_y = f32(max(sy, 0))
+		clamp_scroll(b)
 	}
 	app.active = clamp(active, 0, max(len(app.bufs) - 1, 0))
 }
@@ -155,8 +156,8 @@ draw_signature :: proc() {
 	w := min(f32(text_width(app.sig, app.fs)) + 24 * S, app.W - 16 * S)
 	h := app.line_h + 12 * S
 	x := app.text.x - b.scroll_x + x_in_line(b, b.cur.line, b.cur.col) - 20 * S
-	y := app.text.y + (f32(b.cur.line) - b.scroll_y) * app.line_h - h - 4 * S
-	if y < app.editor.y do y = app.text.y + (f32(b.cur.line) - b.scroll_y + 1) * app.line_h + 4 * S
+	y := y_of(b, b.cur) - h - 4 * S
+	if y < app.editor.y do y = y_of(b, b.cur) + app.line_h + 4 * S
 	r := Rect{clamp(x, 4 * S, app.W - w - 4 * S), y, w, h}
 	popup(r)
 	set_clip(shrink(r, 6 * S))
@@ -179,13 +180,14 @@ minimap_start :: proc(b: ^Buffer) -> int {
 	vis := int(app.text.h / mm_line_h())
 	total := len(b.lines)
 	if total <= vis do return 0
-	t := b.scroll_y / max(f32(total) - rows(), 1)
+	t := f32(top_line(b)) / max(f32(total) - rows(), 1)
 	return clamp(int(t * f32(total - vis)), 0, total - vis)
 }
 
 minimap_click :: proc(b: ^Buffer, y: f32) {
 	l := f32(minimap_start(b)) + (y - app.text.y) / mm_line_h()
-	b.scroll_y = clamp(l - rows() / 2, 0, f32(len(b.lines) - 1))
+	b.scroll_y = f32(row_of(b, {clamp(int(l), 0, len(b.lines) - 1), 0})) - rows() / 2
+	clamp_scroll(b)
 }
 
 draw_minimap :: proc(b: ^Buffer) {
@@ -199,7 +201,7 @@ draw_minimap :: proc(b: ^Buffer) {
 	first := minimap_start(b)
 	n := int(r.h / lh) + 1
 	// visible region
-	fill({r.x, r.y + (b.scroll_y - f32(first)) * lh, mw, rows() * lh}, col("element.hover"))
+	fill({r.x, r.y + f32(top_line(b) - first) * lh, mw, rows() * lh}, col("element.hover"))
 	in_block := block_state(b, first)
 	cw := max(S, 1)
 	tabw := b.tab_size

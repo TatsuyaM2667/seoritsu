@@ -70,6 +70,12 @@ Buffer :: struct {
 	ts_lo, ts_hi:    int, // lines ts_lines covers this frame
 	ts_lines:        [][]Style,
 	ts_set:          [][]bool, // which bytes the query colored
+	// display rows (view.odin)
+	edit_gen:        int,
+	fold_gen:        int,
+	folds:           [dynamic]Fold,
+	disp:            [dynamic]Disp_Row,
+	disp_key:        Disp_Key,
 }
 
 Change :: struct {
@@ -136,6 +142,8 @@ set_text :: proc(b: ^Buffer, text: string) {
 	if b.ts_tree != nil do ts_tree_delete(b.ts_tree)
 	b.ts_tree, b.ts_dirty = nil, true
 	if b.ts_parser != nil do ts_parser_reset(b.ts_parser)
+	b.edit_gen += 1
+	clear(&b.folds)
 	for &l in b.lines do delete(l)
 	clear(&b.lines)
 	t := text
@@ -231,6 +239,7 @@ replace :: proc(b: ^Buffer, a, z: Pos, text: string, record := true, merge := fa
 	}
 	append(&b.changes, Change{a, z, to_lsp_col(b, a, true), to_lsp_col(b, z, true), strings.clone(text)})
 	ts_edit(b, a, z, text)
+	folds_edit(b, a, z, text)
 	suffix := strings.clone(string(b.lines[z.line][z.col:]), context.temp_allocator)
 	resize(&b.lines[a.line], a.col)
 	// drop lines a+1..z

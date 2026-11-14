@@ -73,6 +73,9 @@ foreign tslib {
 	ts_tree_root_node :: proc(t: rawptr) -> TSNode ---
 	ts_node_start_point :: proc(n: TSNode) -> TSPoint ---
 	ts_node_end_point :: proc(n: TSNode) -> TSPoint ---
+	ts_node_parent :: proc(n: TSNode) -> TSNode ---
+	ts_node_is_null :: proc(n: TSNode) -> bool ---
+	ts_node_descendant_for_point_range :: proc(n: TSNode, a, z: TSPoint) -> TSNode ---
 	ts_query_new :: proc(lang: rawptr, src: [^]u8, len: u32, err_offset: ^u32, err_type: ^c.int) -> rawptr ---
 	ts_query_pattern_count :: proc(q: rawptr) -> u32 ---
 	ts_query_capture_count :: proc(q: rawptr) -> u32 ---
@@ -361,4 +364,19 @@ preds_ok :: proc(b: ^Buffer, preds: []Pred, caps: []TSQueryCapture) -> bool {
 		if !ok do return false
 	}
 	return true
+}
+
+// Smallest syntax node strictly larger than a..z (for "expand selection").
+ts_enclosing :: proc(b: ^Buffer, a, z: Pos) -> (na, nz: Pos, ok: bool) {
+	if b.ts_tree == nil || b.ts_dirty do return
+	pa, pz := TSPoint{u32(a.line), u32(a.col)}, TSPoint{u32(z.line), u32(z.col)}
+	n := ts_node_descendant_for_point_range(ts_tree_root_node(b.ts_tree), pa, pz)
+	for !ts_node_is_null(n) {
+		s, e := ts_node_start_point(n), ts_node_end_point(n)
+		if s != pa || e != pz {
+			return clamp_pos(b, {int(s.row), int(s.column)}), clamp_pos(b, {int(e.row), int(e.column)}), true
+		}
+		n = ts_node_parent(n)
+	}
+	return
 }

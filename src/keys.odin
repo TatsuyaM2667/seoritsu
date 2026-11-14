@@ -37,6 +37,16 @@ COMMANDS := [?]Cmd {
 	{"プロジェクトパネルにフォーカス", 'e', {.Ctrl, .Shift}, proc(b: ^Buffer) {panel_focus_toggle()}, false},
 	{"ターミナルを開く", '`', {.Ctrl}, proc(b: ^Buffer) {open_terminal()}, false},
 	{"ターミナルアプリを選ぶ", 0, {}, proc(b: ^Buffer) {choose_terminal()}, false},
+	{"新しいファイル", 'n', {.Ctrl}, proc(b: ^Buffer) {new_file_prompt()}, false},
+	{"フォルダを開く", 'o', {.Ctrl}, proc(b: ^Buffer) {open_folder_prompt()}, false},
+	{"最近のプロジェクト", 'o', {.Ctrl, .Alt}, proc(b: ^Buffer) {recent_picker()}, false},
+	{"名前を付けて保存", 's', {.Ctrl, .Shift}, proc(b: ^Buffer) {save_as_prompt(b)}, true},
+	{"閉じたタブを開き直す", 't', {.Ctrl, .Shift}, proc(b: ^Buffer) {reopen_closed()}, false},
+	{"すべてのタブを閉じる", 0, {}, proc(b: ^Buffer) {close_tabs(proc(i: int) -> bool {return true})}, false},
+	{"ブランチを切り替え", 0, {}, proc(b: ^Buffer) {branch_picker()}, false},
+	{"git: すべてステージしてコミット", 0, {}, proc(b: ^Buffer) {git_commit_prompt()}, false},
+	{"git: プッシュ", 0, {}, proc(b: ^Buffer) {git_push()}, false},
+	{"git: プル", 0, {}, proc(b: ^Buffer) {git_pull()}, false},
 	{"ミニマップの表示切替", 'm', {.Ctrl, .Alt}, proc(b: ^Buffer) {app.minimap = !app.minimap}, false},
 	{"文字を大きく", '=', {.Ctrl}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
 	{"文字を大きく", '+', {.Ctrl, .Shift}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
@@ -59,6 +69,18 @@ COMMANDS := [?]Cmd {
 	{"行コメントの切替", '/', {.Ctrl}, proc(b: ^Buffer) {each_caret(b, toggle_comment)}, true},
 	{"行を削除", 'k', {.Ctrl, .Shift}, proc(b: ^Buffer) {each_caret(b, delete_line)}, true},
 	{"行を複製", 'd', {.Ctrl, .Shift}, proc(b: ^Buffer) {each_caret(b, duplicate_line)}, true},
+	{"行を選択", 'l', {.Ctrl}, proc(b: ^Buffer) {clear(&b.extra); select_line(b)}, true},
+	{"下に行を挿入", K_RETURN, {.Ctrl}, proc(b: ^Buffer) {each_caret(b, newline_below)}, true},
+	{"上に行を挿入", K_RETURN, {.Ctrl, .Shift}, proc(b: ^Buffer) {each_caret(b, newline_above)}, true},
+	{"行を結合", 'j', {.Ctrl}, proc(b: ^Buffer) {clear(&b.extra); join_lines(b)}, true},
+	{"インデント", ']', {.Ctrl}, proc(b: ^Buffer) {shift_lines(b, false)}, true},
+	{"インデント解除", '[', {.Ctrl}, proc(b: ^Buffer) {shift_lines(b, true)}, true},
+	{"対応する括弧へ移動", 'm', {.Ctrl}, proc(b: ^Buffer) {goto_bracket(b)}, true},
+	{"選択範囲を広げる", K_RIGHT, {.Alt, .Shift}, proc(b: ^Buffer) {clear(&b.extra); expand_selection(b)}, true},
+	{"選択範囲を狭める", K_LEFT, {.Alt, .Shift}, proc(b: ^Buffer) {clear(&b.extra); shrink_selection(b)}, true},
+	{"行を並べ替え", 0, {}, proc(b: ^Buffer) {clear(&b.extra); sort_lines(b)}, true},
+	{"大文字に変換", 0, {}, proc(b: ^Buffer) {clear(&b.extra); change_case(b, true)}, true},
+	{"小文字に変換", 0, {}, proc(b: ^Buffer) {clear(&b.extra); change_case(b, false)}, true},
 	{"行を上へ移動", K_UP, {.Alt}, proc(b: ^Buffer) {move_lines(b, -1)}, true},
 	{"行を下へ移動", K_DOWN, {.Alt}, proc(b: ^Buffer) {move_lines(b, 1)}, true},
 	{"次の一致もカーソルで選択", 'd', {.Ctrl}, proc(b: ^Buffer) {add_next_occurrence(b)}, true},
@@ -102,6 +124,7 @@ key_label :: proc(c: Cmd) -> string {
 	case K_F3: strings.write_string(&sb, "F3")
 	case K_F12: strings.write_string(&sb, "F12")
 	case K_F2_: strings.write_string(&sb, "F2")
+	case K_RETURN: strings.write_string(&sb, "Enter")
 	case ' ': strings.write_string(&sb, "Space")
 	case: strings.write_rune(&sb, rune(c.key) - 32 if c.key >= 'a' && c.key <= 'z' else rune(c.key))
 	}
@@ -128,6 +151,7 @@ on_key :: proc(ev: Ev) {
 		menu.on = false
 		if ev.key == K_ESCAPE do return
 	}
+	if panel_clip_key(ev) do return
 	b := cur_buf()
 	// popups that eat keys first
 	if app.mode == .Edit && app.comp_on && b != nil {
@@ -358,7 +382,7 @@ start_input :: proc(b: ^Buffer, m: Mode) {
 		a, z := word_at(b, b.cur)
 		app.rename_pos = a
 		append(&app.input, text_range(b, a, z))
-	case .Line, .Edit, .Picker, .New_File, .New_Dir, .Rename_File:
+	case .Line, .Edit, .Picker, .New_File, .New_Dir, .Rename_File, .Prompt:
 	}
 }
 
@@ -410,7 +434,7 @@ input_changed :: proc(b: ^Buffer) {
 			b.cur, b.anchor = app.find_origin, app.find_origin
 			if len(app.input) > 0 do find_next(b, false, quiet = true)
 		}
-	case .Line, .Rename, .Edit, .New_File, .New_Dir, .Rename_File:
+	case .Line, .Rename, .Edit, .New_File, .New_Dir, .Rename_File, .Prompt:
 	}
 }
 
@@ -462,6 +486,9 @@ submit_input :: proc(b: ^Buffer, mods: Mods) {
 		if b != nil && q != "" do lsp_rename(b, app.rename_pos, q)
 	case .New_File, .New_Dir, .Rename_File:
 		submit_file_op(q)
+	case .Prompt:
+		app.mode = .Edit
+		if prompt.submit != nil do prompt.submit(q)
 	case .Edit:
 	}
 }

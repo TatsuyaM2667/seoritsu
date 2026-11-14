@@ -115,6 +115,10 @@ panel_menu :: proc(x, y: f32, row: int) {
 			{label = "新しいフォルダ", key = "Shift+A", run = proc() {panel_input(.New_Dir, "")}},
 			{label = "ファイルマネージャで表示", run = proc() {reveal_in_file_manager(menu.path)}, sep = true},
 			{label = "ここでターミナルを開く", run = proc() {open_terminal(dir_of(menu.path))}},
+			{label = "コピー", key = "Ctrl+C", run = proc() {panel_copy(menu.path, false)}, sep = true},
+			{label = "切り取り", key = "Ctrl+X", run = proc() {panel_copy(menu.path, true)}},
+			{label = "貼り付け", key = "Ctrl+V", run = proc() {panel_paste()}},
+			{label = "複製", key = "Ctrl+D", run = proc() {panel_duplicate(menu.path)}},
 			{label = "パスをコピー", run = proc() {plat_set_clipboard_text(menu.path)}, sep = true},
 			{label = "相対パスをコピー", run = proc() {plat_set_clipboard_text(rel_path(menu.path))}},
 			{label = "名前を変更", key = "R", run = proc() {panel_input(.Rename_File, filepath.base(menu.path))}, sep = true},
@@ -126,6 +130,7 @@ panel_menu :: proc(x, y: f32, row: int) {
 		menu_open(x, y, {
 			{label = "新しいファイル", key = "A", run = proc() {panel_input(.New_File, "")}},
 			{label = "新しいフォルダ", key = "Shift+A", run = proc() {panel_input(.New_Dir, "")}},
+			{label = "貼り付け", key = "Ctrl+V", run = proc() {panel_paste()}},
 			{label = "ファイルマネージャで表示", run = proc() {reveal_in_file_manager(project_root)}, sep = true},
 			{label = "ここでターミナルを開く", run = proc() {open_terminal(project_root)}},
 		}, project_root)

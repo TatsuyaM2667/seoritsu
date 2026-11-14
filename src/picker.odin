@@ -10,7 +10,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 
-Picker_Kind :: enum {Files, Commands, List, Search, Actions, Terminal}
+Picker_Kind :: enum {Files, Commands, List, Search, Actions, Terminal, Projects, Branches}
 
 Pick :: struct {
 	label, detail, path: string,
@@ -80,6 +80,10 @@ picker_choose :: proc(row: int) {
 		lsp_run_action(p.server, p.raw)
 	case .Terminal:
 		set_terminal(p.path)
+	case .Projects:
+		switch_project(p.path)
+	case .Branches:
+		git_switch(p.path)
 	}
 }
 
@@ -312,6 +316,8 @@ draw_inputbar :: proc() {
 		draw_field(row, 0xf07b, q, fmt.tprintf("新しいフォルダ (%s/ に作成)", rel_path(app.panel_target)), true)
 	case .Rename_File:
 		draw_field(row, 0xf044, q, "新しいファイル名", true)
+	case .Prompt:
+		draw_field(row, prompt.icon, q, prompt.hint, true)
 	case .Edit, .Picker:
 	}
 	reset_clip()

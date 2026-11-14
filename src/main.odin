@@ -12,7 +12,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:unicode/utf8"
 
-Mode :: enum {Edit, Find, Replace, Line, Rename, Picker, New_File, New_Dir, Rename_File}
+Mode :: enum {Edit, Find, Replace, Line, Rename, Picker, New_File, New_Dir, Rename_File, Prompt}
 
 Node :: struct {
 	path, name: string,
@@ -152,6 +152,7 @@ open_file :: proc(path: string) -> ^Buffer {
 	abs, _ := filepath.abs(path, context.temp_allocator)
 	for b, i in app.bufs do if b.path == abs {
 		app.active = i
+		if app.panel_on do panel_reveal(abs)
 		return b
 	}
 	b, ok := buffer_load(abs)
@@ -162,6 +163,7 @@ open_file :: proc(path: string) -> ^Buffer {
 	append(&app.bufs, b)
 	app.active = len(app.bufs) - 1
 	git_refresh(b)
+	if app.panel_on do panel_reveal(abs) // Zed's auto-reveal
 	lsp_open(b) // starts the server; the document is opened once it is ready
 	return b
 }
@@ -175,6 +177,7 @@ close_tab :: proc(i: int) {
 		return
 	}
 	app.close_armed = nil
+	remember_closed(b)
 	lsp_close(b)
 	delete_key(&app.saving, b)
 	ordered_remove(&app.bufs, i)
@@ -555,12 +558,14 @@ on_mouse :: proc(ev: Ev) {
 			if app.hover != "" && b != nil && pos_at(b, x, y).line != app.hover_pos.line do app.hover = ""
 		}
 		app.mx, app.my = x, y
+		drag_motion(x, y)
 		if app.minimap_drag && b != nil do minimap_click(b, y)
 		if app.selecting && b != nil {
 			b.cur = pos_at(b, x, y)
 			ensure_visible(b)
 		}
 	case .Up:
+		drag_release()
 		app.selecting = false
 		app.minimap_drag = false
 	case .Wheel:
@@ -574,10 +579,7 @@ on_mouse :: proc(ev: Ev) {
 	case .Down:
 		app.hover = ""
 		if menu_click(x, y) do return
-		if ev.button == 1 && contains(app.status, x, y) {
-			status_click(x, y)
-			return
-		}
+		if ev.button == 1 && status_click(x, y) do return
 		if ev.button == 3 && app.mode == .Edit {
 			if app.panel_on && contains(app.panel, x, y) {
 				app.panel_focus = true
@@ -620,7 +622,7 @@ on_mouse :: proc(ev: Ev) {
 			app.panel_focus = false
 			if i, close, ok := tab_at(x); ok {
 				if ev.button == 2 || close do close_tab(i)
-				else if ev.button == 1 do app.active = i
+				else if ev.button == 1 do app.active, tab_drag = i, i
 			} else if ev.button == 1 {
 				plat_move()
 			}
@@ -629,14 +631,9 @@ on_mouse :: proc(ev: Ev) {
 		if app.panel_on && contains(app.panel, x, y) {
 			app.panel_focus = true
 			i := int((y - app.panel.y - PANEL_TOP * S + app.panel_scroll) / (PANEL_ROW * S))
-			if y > app.panel.y + PANEL_TOP * S && i >= 0 && i < len(app.tree) {
+			if ev.button == 1 && y > app.panel.y + PANEL_TOP * S && i >= 0 && i < len(app.tree) {
 				app.panel_sel = i
-				n := app.tree[i]
-				if n.dir {
-					panel_set_expanded(n.path, !app.expanded[n.path])
-				} else {
-					open_file(n.path)
-				}
+				panel_press, press_at = i, {x, y} // click on release, drag on motion
 			}
 			return
 		}
@@ -1118,7 +1115,6 @@ draw_status :: proc() {
 	r := app.status
 	fill(r, col("status_bar.background"))
 	fill({0, r.y, r.w, 1}, col("border"))
-	clear(&status_buttons)
 	bl := baseline(r, app.ui - 1)
 	sz := app.ui - i32(S)
 	x := 6 * S
@@ -1234,11 +1230,13 @@ draw_hover :: proc() {
 frame :: proc() {
 	clear_canvas({}) // fully transparent: each region paints its own translucent color
 	layout()
+	clear(&status_buttons) // re-registered by whatever draws them this frame
 	draw_editor()
 	draw_titlebar()
 	draw_tabbar()
 	draw_breadcrumbs()
 	if app.panel_on do draw_panel()
+	draw_drop_target()
 	draw_status()
 	draw_hover()
 	draw_completion()
@@ -1276,6 +1274,7 @@ main :: proc() {
 	}
 	if len(open_list) > 0 && len(os.args) == 2 do project_root = filepath.dir(open_list[0])
 	refresh_tree()
+	recent_add(project_root)
 	for p in open_list do open_file(p)
 	app.active = 0
 	if len(os.args) == 1 || (len(open_list) == 0 && len(os.args) == 2) do session_restore()
@@ -1372,6 +1371,8 @@ main :: proc() {
 				if ev.button == 0 do check_external_changes()
 			case .Motion, .Down, .Up, .Wheel:
 				on_mouse(ev)
+			case .Dnd_Motion, .Dnd_Leave, .Dnd_Drop:
+				on_dnd(ev)
 			}
 			if ev.kind != .Preedit do delete(ev.text)
 		}
@@ -1384,4 +1385,5 @@ main :: proc() {
 	}
 	if dump == "" do session_save()
 	lsp_shutdown()
+	exec_switch() // a project switch: start over in the other folder
 }

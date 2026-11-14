@@ -30,6 +30,12 @@ Rebuild C/Zig libs after changing wasm/ or third_party/: `./wasm/build.sh`.
 Title bar, breadcrumbs, git status colors, project panel keys (`panel_focus`), file ops (trash = freedesktop
 ~/.local/share/Trash, never rm), external terminal (choice saved in ~/.local/state/seoritsu/terminal).
 
+## Extras (src/extras.odin)
+Drag & drop via plat_start_drag / Dnd_* events (panel: press = click on release, drag on motion), file clipboard,
+recent projects (~/.local/state/seoritsu/recent; switching re-execs /proc/self/exe after the normal quit path),
+git branch/commit/push/pull (synchronous), generic `.Prompt` input mode, extra edit commands.
+Dump runs: set XDG_STATE_HOME to a scratch dir so they don't touch the user's recent list / terminal choice.
+
 ## Ideas not done yet
 Embedded terminal pane, split panes, code folding, vim mode, completion with several carets, codeAction/resolve,
 damage-tracked partial redraw.

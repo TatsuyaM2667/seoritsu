@@ -60,12 +60,25 @@ draw_titlebar :: proc() {
 	r := app.titlebar
 	fill(r, col("title_bar.background"))
 	bl := baseline(r, app.ui)
-	x := 14 * S
-	x += text(x, bl, filepath.base(project_root), app.ui, col("text"), true) + 14 * S
-	if git_branch != "" {
-		draw_glyph_c(x, bl, 0xe725, app.ui, col("text.muted"))
-		text(x + 20 * S, bl, git_branch, app.ui, col("text.muted"))
+	x := 8 * S
+	title_button :: proc(x: f32, icon: rune, label: string, c: Color, run: proc()) -> f32 {
+		S := app.S
+		r := app.titlebar
+		w := f32(text_width(label, app.ui, true)) + (20 * S if icon != 0 else 0) + 12 * S
+		br := Rect{x, r.y + 4 * S, w, r.h - 8 * S}
+		if contains(br, app.mx, app.my) do rrect(br, 5 * S, col("element.hover"))
+		bl := baseline(r, app.ui)
+		tx := x + 6 * S
+		if icon != 0 {
+			draw_glyph_c(tx, bl, icon, app.ui, col("text.muted"))
+			tx += 20 * S
+		}
+		text(tx, bl, label, app.ui, c)
+		append(&status_buttons, Ui_Button{br, run})
+		return w
 	}
+	x += title_button(x, 0, filepath.base(project_root), col("text"), recent_picker) + 4 * S
+	if git_branch != "" do title_button(x, 0xe725, git_branch, col("text.muted"), branch_picker)
 	// window close (no server-side decorations on tiling compositors)
 	cx := r.w - 40 * S
 	if contains({cx, 0, 40 * S, r.h}, app.mx, app.my) do fill({cx, 0, 40 * S, r.h}, hex(0xf85149, 0x80))
@@ -266,18 +279,22 @@ submit_file_op :: proc(name: string) {
 			toast("名前を変更できませんでした")
 			return
 		}
-		// open tabs follow the file (or everything under a renamed folder)
-		for b in app.bufs {
-			if b.path != old && !strings.has_prefix(b.path, strings.concatenate({old, "/"}, context.temp_allocator)) do continue
-			lsp_close(b)
-			np := strings.concatenate({p, b.path[len(old):]})
-			delete(b.path)
-			b.path = np
-			lsp_open(b)
-		}
+		retarget_buffers(old, p)
 		refresh_tree()
 		panel_reveal(p)
-	case .Edit, .Find, .Replace, .Line, .Rename, .Picker:
+	case .Edit, .Find, .Replace, .Line, .Rename, .Picker, .Prompt:
+	}
+}
+
+// Open tabs follow a moved / renamed file (or everything under a moved folder).
+retarget_buffers :: proc(old, new: string) {
+	for b in app.bufs {
+		if b.path != old && !strings.has_prefix(b.path, strings.concatenate({old, "/"}, context.temp_allocator)) do continue
+		lsp_close(b)
+		np := strings.concatenate({new, b.path[len(old):]})
+		delete(b.path)
+		b.path = np
+		lsp_open(b)
 	}
 }
 

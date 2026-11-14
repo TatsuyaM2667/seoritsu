@@ -30,6 +30,12 @@ ts_highlight_and_edit :: proc(t: ^testing.T) {
 	for i := 0; b.ts_dirty && i < 1000; i += 1 do ts_update(b, 50)
 	ts_prepare(b, 0, 2)
 	testing.expect_value(t, b.ts_lines[1][5], Style.Keyword) // "proc"
+
+	// expand selection walks up the syntax tree: "{}" -> the struct type -> ...
+	a, z, ok := ts_enclosing(b, {0, 12}, {0, 12})
+	testing.expect(t, ok, "a node encloses the caret")
+	a2, z2, ok2 := ts_enclosing(b, a, z)
+	testing.expect(t, ok2 && (lt(a2, a) || lt(z, z2)), "parent is strictly larger")
 }
 
 // New file / rename / trash from the project panel, in a throwaway folder.

@@ -57,6 +57,7 @@ check_external_changes :: proc() {
 			git_refresh(b)
 		}
 	}
+	refresh_tree() // files added / removed / committed elsewhere
 }
 
 // ---------------------------------------------------------------------------

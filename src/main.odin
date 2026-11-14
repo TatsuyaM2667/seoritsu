@@ -12,7 +12,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:unicode/utf8"
 
-Mode :: enum {Edit, Find, Replace, Line, Rename, Picker}
+Mode :: enum {Edit, Find, Replace, Line, Rename, Picker, New_File, New_Dir, Rename_File}
 
 Node :: struct {
 	path, name: string,
@@ -29,13 +29,18 @@ app: struct {
 	// layout, px (recomputed every frame)
 	fs, ui:                  i32,
 	line_h, cell_w:          f32,
-	tabbar, editor, gutter:  Rect,
+	titlebar, tabbar, crumbs: Rect,
+	editor, gutter:          Rect,
 	text, panel, status:     Rect,
 	// mouse
 	mx, my:                  f32,
 	selecting:               bool,
 	panel_on:                bool,
 	panel_scroll:            f32,
+	panel_focus:             bool, // arrow keys / a / r / Delete act on the project panel
+	panel_sel:               int,
+	panel_target:            string, // file op in progress: folder (new) or path (rename)
+	trash_armed:             string,
 	tree:                    [dynamic]Node,
 	expanded:                map[string]bool,
 	// popups
@@ -134,6 +139,7 @@ finish_save :: proc(b: ^Buffer) {
 	if buffer_save(b) {
 		lsp_saved(b)
 		git_refresh(b)
+		git_status_refresh()
 	} else {
 		toast(fmt.tprintf("保存できませんでした: %s", b.path))
 	}
@@ -331,17 +337,20 @@ layout :: proc() {
 	app.ui = i32(f32(zed.ui_font_size) * S)
 	app.line_h = math.round(f32(app.fs) * 1.5)
 	app.cell_w = f32(get_glyph('M', app.fs).adv)
-	tab_h, status_h := math.round(36 * S), math.round(26 * S)
+	title_h, tab_h, crumb_h, status_h := math.round(34 * S), math.round(36 * S), math.round(28 * S), math.round(26 * S)
 	pw: f32 = math.round(250 * S) if app.panel_on else 0
-	app.tabbar = {0, 0, app.W - pw, tab_h}
-	app.panel = {app.W - pw, 0, pw, app.H - status_h}
+	app.titlebar = {0, 0, app.W, title_h}
+	app.panel = {0, title_h, pw, app.H - title_h - status_h}
+	app.tabbar = {pw, title_h, app.W - pw, tab_h}
+	app.crumbs = {pw, title_h + tab_h, app.W - pw, crumb_h if len(app.bufs) > 0 else 0}
 	app.status = {0, app.H - status_h, app.W, status_h}
-	app.editor = {0, tab_h, app.W - pw, app.H - tab_h - status_h}
+	top := app.crumbs.y + app.crumbs.h
+	app.editor = {pw, top, app.W - pw, app.H - top - status_h}
 	digits := 3
 	if b := cur_buf(); b != nil do digits = max(len(fmt.tprint(len(b.lines))), 3)
 	gw := f32(digits + 3) * app.cell_w
-	app.gutter = {0, app.editor.y, gw, app.editor.h}
-	app.text = {gw + math.round(6 * S), app.editor.y, app.editor.w - gw - math.round(6 * S) - minimap_w(), app.editor.h}
+	app.gutter = {app.editor.x, app.editor.y, gw, app.editor.h}
+	app.text = {app.editor.x + gw + math.round(6 * S), app.editor.y, app.editor.w - gw - math.round(6 * S) - minimap_w(), app.editor.h}
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +565,7 @@ on_mouse :: proc(ev: Ev) {
 		app.minimap_drag = false
 	case .Wheel:
 		if app.panel_on && contains(app.panel, x, y) {
-			app.panel_scroll = max(app.panel_scroll - ev.wheel * 3 * 26 * S, 0)
+			app.panel_scroll = max(app.panel_scroll - ev.wheel * 3 * PANEL_ROW * S, 0)
 		} else if b != nil {
 			if .Shift in ev.mods do b.scroll_x = max(b.scroll_x - ev.wheel * 6 * app.cell_w, 0)
 			else do b.scroll_y = clamp(b.scroll_y - ev.wheel * 3, 0, f32(len(b.lines) - 1))
@@ -577,29 +586,38 @@ on_mouse :: proc(ev: Ev) {
 			}
 			app.comp_on = false
 		}
-		if contains(app.tabbar, x, y) {
-			if i, close, ok := tab_at(x); ok {
-				if ev.button == 2 || close do close_tab(i)
-				else if ev.button == 1 do app.active = i
-			} else if ev.button == 1 {
-				if x > app.tabbar.w - 40 * S do app.running = false
+		if contains(app.titlebar, x, y) {
+			if ev.button == 1 {
+				if x > app.titlebar.w - 40 * S do app.running = false
 				else do plat_move()
 			}
 			return
 		}
+		if contains(app.tabbar, x, y) {
+			app.panel_focus = false
+			if i, close, ok := tab_at(x); ok {
+				if ev.button == 2 || close do close_tab(i)
+				else if ev.button == 1 do app.active = i
+			} else if ev.button == 1 {
+				plat_move()
+			}
+			return
+		}
 		if app.panel_on && contains(app.panel, x, y) {
-			i := int((y - app.panel.y - 34 * S + app.panel_scroll) / (26 * S))
-			if y > app.panel.y + 34 * S && i >= 0 && i < len(app.tree) {
+			app.panel_focus = true
+			i := int((y - app.panel.y - PANEL_TOP * S + app.panel_scroll) / (PANEL_ROW * S))
+			if y > app.panel.y + PANEL_TOP * S && i >= 0 && i < len(app.tree) {
+				app.panel_sel = i
 				n := app.tree[i]
 				if n.dir {
-					app.expanded[n.path] = !app.expanded[n.path]
-					rebuild_tree()
+					panel_set_expanded(n.path, !app.expanded[n.path])
 				} else {
 					open_file(n.path)
 				}
 			}
 			return
 		}
+		app.panel_focus = false
 		if b == nil || !contains(app.editor, x, y) || ev.button != 1 do return
 		if app.minimap && x > app.text.x + app.text.w - minimap_w() {
 			minimap_click(b, y)
@@ -638,7 +656,7 @@ tab_w :: proc(b: ^Buffer) -> f32 {
 }
 
 tab_at :: proc(x: f32) -> (idx: int, close, ok: bool) {
-	tx: f32 = 0
+	tx := app.tabbar.x
 	for b, i in app.bufs {
 		w := tab_w(b)
 		if x >= tx && x < tx + w do return i, x > tx + w - 26 * app.S, true
@@ -796,7 +814,7 @@ diag_color :: proc(sev: int) -> Color {
 draw_editor :: proc() {
 	S := app.S
 	fill(app.gutter, col("editor.gutter.background"))
-	fill({app.gutter.w, app.editor.y, app.editor.w - app.gutter.w, app.editor.h}, col("editor.background"))
+	fill({app.gutter.x + app.gutter.w, app.editor.y, app.editor.w - app.gutter.w, app.editor.h}, col("editor.background"))
 	b := cur_buf()
 	if b == nil {
 		set_clip(app.editor)
@@ -855,17 +873,17 @@ draw_editor :: proc() {
 		set_clip(app.gutter)
 		num := fmt.tprint(l + 1)
 		nc := col("editor.active_line_number") if l == b.cur.line else col("editor.line_number")
-		text(app.gutter.w - 2 * app.cell_w - f32(text_width(num, app.fs, false)), by, num, app.fs, nc, false)
+		text(app.gutter.x + app.gutter.w - 2 * app.cell_w - f32(text_width(num, app.fs, false)), by, num, app.fs, nc, false)
 		worst := 5
 		for d in b.diags do if d.a.line == l do worst = min(worst, d.severity)
-		if worst < 5 do rrect({app.gutter.w - 1.4 * app.cell_w, y + app.line_h / 2 - 3 * S, 6 * S, 6 * S}, 3 * S, diag_color(worst))
+		if worst < 5 do rrect({app.gutter.x + app.gutter.w - 1.4 * app.cell_w, y + app.line_h / 2 - 3 * S, 6 * S, 6 * S}, 3 * S, diag_color(worst))
 		// git: added / modified bar, deleted wedge
 		for gi < len(b.git) && int(b.git[gi].line) < l do gi += 1
 		for g := gi; g < len(b.git) && int(b.git[g].line) == l; g += 1 {
 			switch b.git[g].kind {
-			case .Added: fill({2 * S, y, 3 * S, app.line_h}, col("created"))
-			case .Modified: fill({2 * S, y, 3 * S, app.line_h}, col("modified"))
-			case .Deleted: rrect({0, y - 3 * S, 7 * S, 6 * S}, 3 * S, col("deleted"))
+			case .Added: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("created"))
+			case .Modified: fill({app.gutter.x + 2 * S, y, 3 * S, app.line_h}, col("modified"))
+			case .Deleted: rrect({app.gutter.x, y - 3 * S, 7 * S, 6 * S}, 3 * S, col("deleted"))
 			}
 		}
 
@@ -1009,54 +1027,54 @@ draw_tabbar :: proc() {
 	r := app.tabbar
 	fill(r, col("tab_bar.background"))
 	set_clip(r)
-	x: f32
+	x := r.x
 	for b, i in app.bufs {
 		w := tab_w(b)
-		tr := Rect{x, 0, w, r.h}
+		tr := Rect{x, r.y, w, r.h}
 		active := i == app.active
 		fill(tr, col("tab.active_background") if active else col("tab.inactive_background"))
-		if active do fill({x, r.h - 2 * S, w, 2 * S}, col("accent"))
+		if active do fill({x, r.y + r.h - 2 * S, w, 2 * S}, col("accent"))
 		g, gc := lang_glyph(b.path)
 		draw_glyph_c(x + 12 * S, baseline(tr, app.ui), g, app.ui, hex(gc))
 		name := filepath.base(b.path)
-		text(x + 32 * S, baseline(tr, app.ui), name, app.ui, col("text") if active else col("text.muted"))
+		text(x + 32 * S, baseline(tr, app.ui), name, app.ui, git_color(b.path, col("text") if active else col("text.muted")))
 		hot := contains(tr, app.mx, app.my)
-		cr := Rect{x + w - 26 * S, (r.h - 18 * S) / 2, 18 * S, 18 * S}
+		cr := Rect{x + w - 26 * S, r.y + (r.h - 18 * S) / 2, 18 * S, 18 * S}
 		if b.dirty && !hot {
 			rrect({cr.x + 5 * S, cr.y + 5 * S, 8 * S, 8 * S}, 4 * S, col("modified"))
 		} else if hot || active {
 			if contains(cr, app.mx, app.my) do rrect(cr, 4 * S, col("element.hover"))
 			draw_glyph_c(cr.x + 4 * S, baseline(cr, app.ui - 2), 0xf00d, app.ui - 2 * i32(S), col("text.muted"))
 		}
-		fill({x + w - 1, 8 * S, 1, r.h - 16 * S}, col("border"))
+		fill({x + w - 1, r.y + 8 * S, 1, r.h - 16 * S}, col("border"))
 		x += w
 	}
-	// window close (no server-side decorations on tiling compositors)
-	cx := r.w - 34 * S
-	if contains({cx, 0, 34 * S, r.h}, app.mx, app.my) do fill({cx, 0, 34 * S, r.h}, hex(0xf85149, 0x80))
-	draw_glyph_c(cx + 11 * S, baseline(r, app.ui), 0xf00d, app.ui, col("text.muted"))
 	reset_clip()
-	fill({0, r.h - 1, r.w, 1}, col("border"))
+	fill({r.x, r.y + r.h - 1, r.w, 1}, col("border"))
 }
 
 draw_panel :: proc() {
 	S := app.S
 	r := app.panel
 	fill(r, col("panel.background"))
-	fill({r.x, 0, 1, r.h}, col("border"))
-	set_clip(r)
-	header := Rect{r.x, 0, r.w, 34 * S}
-	text(r.x + 14 * S, baseline(header, app.ui - 1), strings.to_upper(filepath.base(project_root), context.temp_allocator), app.ui - i32(S), col("text.muted"))
-	set_clip({r.x, 34 * S, r.w, r.h - 34 * S})
-	rh := 26 * S
+	fill({r.x + r.w - 1, r.y, 1, r.h}, col("border"))
+	top := r.y + PANEL_TOP * S
+	set_clip({r.x, top, r.w, r.h - PANEL_TOP * S})
+	rh := PANEL_ROW * S
 	cur := cur_buf()
 	for n, i in app.tree {
-		y := 34 * S + f32(i) * rh - app.panel_scroll
-		if y + rh < 34 * S do continue
-		if y > r.h do break
+		y := top + f32(i) * rh - app.panel_scroll
+		if y + rh < top do continue
+		if y > r.y + r.h do break
 		row := Rect{r.x + 4 * S, y, r.w - 8 * S, rh}
-		if cur != nil && cur.path == n.path do rrect(row, 5 * S, col("element.selected"))
-		else if contains(row, app.mx, app.my) do rrect(row, 5 * S, col("element.hover"))
+		if app.panel_focus && i == app.panel_sel {
+			rrect(row, 5 * S, col("element.selected"))
+			rrect(row, 5 * S, col("accent"), ring = max(S, 1))
+		} else if cur != nil && cur.path == n.path {
+			rrect(row, 5 * S, col("element.selected"))
+		} else if contains(row, app.mx, app.my) {
+			rrect(row, 5 * S, col("element.hover"))
+		}
 		x := r.x + 12 * S + f32(n.depth) * 14 * S
 		bl := baseline(row, app.ui)
 		if n.dir {
@@ -1067,7 +1085,7 @@ draw_panel :: proc() {
 			g, gc := lang_glyph(n.name)
 			draw_glyph_c(x + 16 * S, bl, g, app.ui, hex(gc))
 		}
-		text(x + 36 * S, bl, n.name, app.ui, col("text"))
+		text(x + 36 * S, bl, n.name, app.ui, git_color(n.path, col("text")))
 	}
 	reset_clip()
 }
@@ -1187,7 +1205,9 @@ frame :: proc() {
 	clear_canvas({}) // fully transparent: each region paints its own translucent color
 	layout()
 	draw_editor()
+	draw_titlebar()
 	draw_tabbar()
+	draw_breadcrumbs()
 	if app.panel_on do draw_panel()
 	draw_status()
 	draw_hover()
@@ -1224,7 +1244,7 @@ main :: proc() {
 		else do append(&open_list, abs)
 	}
 	if len(open_list) > 0 && len(os.args) == 2 do project_root = filepath.dir(open_list[0])
-	rebuild_tree()
+	refresh_tree()
 	for p in open_list do open_file(p)
 	app.active = 0
 	if len(os.args) == 1 || (len(open_list) == 0 && len(os.args) == 2) do session_restore()

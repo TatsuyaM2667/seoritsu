@@ -33,7 +33,10 @@ COMMANDS := [?]Cmd {
 	{"タブを閉じる", 'w', {.Ctrl}, proc(b: ^Buffer) {close_tab(app.active)}, false},
 	{"次のタブ", K_TAB, {.Ctrl}, proc(b: ^Buffer) {cycle_tab(1)}, false},
 	{"前のタブ", K_ISO_LEFT_TAB, {.Ctrl, .Shift}, proc(b: ^Buffer) {cycle_tab(-1)}, false},
-	{"プロジェクトパネルの表示切替", 'b', {.Ctrl}, proc(b: ^Buffer) {app.panel_on = !app.panel_on}, false},
+	{"プロジェクトパネルの表示切替", 'b', {.Ctrl}, proc(b: ^Buffer) {app.panel_on = !app.panel_on; app.panel_focus = false}, false},
+	{"プロジェクトパネルにフォーカス", 'e', {.Ctrl, .Shift}, proc(b: ^Buffer) {panel_focus_toggle()}, false},
+	{"ターミナルを開く", '`', {.Ctrl}, proc(b: ^Buffer) {open_terminal()}, false},
+	{"ターミナルアプリを選ぶ", 0, {}, proc(b: ^Buffer) {choose_terminal()}, false},
 	{"ミニマップの表示切替", 'm', {.Ctrl, .Alt}, proc(b: ^Buffer) {app.minimap = !app.minimap}, false},
 	{"文字を大きく", '=', {.Ctrl}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
 	{"文字を大きく", '+', {.Ctrl, .Shift}, proc(b: ^Buffer) {zed.font_size = min(zed.font_size + 1, 48)}, false},
@@ -144,6 +147,10 @@ on_key :: proc(ev: Ev) {
 	}
 	if app.mode != .Edit {
 		mode_key(ev, b)
+		return
+	}
+	if app.panel_focus && app.panel_on {
+		panel_key(ev)
 		return
 	}
 	if b == nil do return
@@ -347,7 +354,7 @@ start_input :: proc(b: ^Buffer, m: Mode) {
 		a, z := word_at(b, b.cur)
 		app.rename_pos = a
 		append(&app.input, text_range(b, a, z))
-	case .Line, .Edit, .Picker:
+	case .Line, .Edit, .Picker, .New_File, .New_Dir, .Rename_File:
 	}
 }
 
@@ -399,7 +406,7 @@ input_changed :: proc(b: ^Buffer) {
 			b.cur, b.anchor = app.find_origin, app.find_origin
 			if len(app.input) > 0 do find_next(b, false, quiet = true)
 		}
-	case .Line, .Rename, .Edit:
+	case .Line, .Rename, .Edit, .New_File, .New_Dir, .Rename_File:
 	}
 }
 
@@ -449,6 +456,8 @@ submit_input :: proc(b: ^Buffer, mods: Mods) {
 	case .Rename:
 		app.mode = .Edit
 		if b != nil && q != "" do lsp_rename(b, app.rename_pos, q)
+	case .New_File, .New_Dir, .Rename_File:
+		submit_file_op(q)
 	case .Edit:
 	}
 }

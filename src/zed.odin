@@ -51,6 +51,7 @@ syntax: [Style]Color
 @(private = "file")
 DEFAULT_THEME := [][2]string {
 	{"background", "#0d111799"},
+	{"title_bar.background", "#0d1117cc"},
 	{"tab_bar.background", "#0d111799"},
 	{"status_bar.background", "#0d111799"},
 	{"toolbar.background", "#0d1117b8"},

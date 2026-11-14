@@ -23,6 +23,7 @@ Wayland・描画層は Ame-FileManager（`~/AmeFileManger/src/gui/`）から複�
 - **編集**：マルチカーソル（Ctrl+D / Ctrl+Shift+L / Alt+クリック / Ctrl+Alt+↑↓、コピペは 1 行 1 カーソル）、
   括弧の自動補完と対応表示、同じ単語のハイライト、行の移動・複製・削除、行コメント、自動インデント、IME
 - **移動・検索**：ファイル検索、コマンドパレット、プロジェクト全体検索（ripgrep）、検索・置換、行へ移動、戻る/進む
+- **画面**：Zed と同じ配置（上にプロジェクト名と git ブランチ、左にプロジェクトパネル、タブの下にパンくず）、ツリーとタブに git の変更色
 - **その他**：git の変更をガターに表示、ミニマップ、セッション復元（開いていたタブとカーソル）、
   外部で変更されたファイルの再読み込み、Zed の autosave
 
@@ -49,6 +50,8 @@ Wayland・描画層は Ame-FileManager（`~/AmeFileManger/src/gui/`）から複�
 | Alt+← / Alt+→ | 戻る / 進む |
 | Alt+↑↓ / Ctrl+Shift+D / Ctrl+Shift+K | 行の移動 / 複製 / 削除 |
 | Ctrl+Alt+M / Ctrl+B | ミニマップ / プロジェクトパネル |
+| Ctrl+Shift+E | プロジェクトパネルへ移動（↑↓←→ / Enter、`a` 新規ファイル、`Shift+A` 新規フォルダ、`r`・F2 名前変更、Delete 2 回でゴミ箱へ、Esc で戻る） |
+| Ctrl+\` | ターミナルをプロジェクトのフォルダで開く（kuraokami → ghostty → foot … の順。パレットの「ターミナルアプリを選ぶ」で変更） |
 
 ## ビルド
 

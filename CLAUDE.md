@@ -25,6 +25,10 @@ Measured: 16 MB RSS, ~0% idle CPU (fixed a redraw loop: only real events set `di
 highlights.scm query colors visible lines over the lexer, LSP semantic tokens still win. Parse is time-sliced (8 ms/loop).
 Rebuild C/Zig libs after changing wasm/ or third_party/: `./wasm/build.sh`.
 
+## Workspace (src/workspace.odin)
+Title bar, breadcrumbs, git status colors, project panel keys (`panel_focus`), file ops (trash = freedesktop
+~/.local/share/Trash, never rm), external terminal (choice saved in ~/.local/state/seoritsu/terminal).
+
 ## Ideas not done yet
-Integrated terminal, split panes, code folding, vim mode, completion with several carets, codeAction/resolve,
+Embedded terminal pane, split panes, code folding, vim mode, completion with several carets, codeAction/resolve,
 damage-tracked partial redraw.

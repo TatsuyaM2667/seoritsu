@@ -31,3 +31,32 @@ ts_highlight_and_edit :: proc(t: ^testing.T) {
 	ts_prepare(b, 0, 2)
 	testing.expect_value(t, b.ts_lines[1][5], Style.Keyword) // "proc"
 }
+
+// New file / rename / trash from the project panel, in a throwaway folder.
+@(test)
+panel_file_ops :: proc(t: ^testing.T) {
+	root := "/tmp/seoritsu-ws-test"
+	os.remove_all(root)
+	os.make_directory_all(pj(root, "sub"))
+	os.set_env("XDG_DATA_HOME", pj(root, "data"))
+	project_root = root
+	app.bufs, app.input, app.tree, app.expanded, app.panel_target, app.trash_armed = nil, nil, nil, nil, "", ""
+	git_status, git_branch = nil, ""
+	refresh_tree()
+
+	for n, i in app.tree do if n.name == "sub" do app.panel_sel = i
+	panel_input(.New_File, "")
+	submit_file_op("a/b.txt")
+	testing.expect(t, os.exists(pj(root, "sub/a/b.txt")), "new file in the selected folder")
+	testing.expect_value(t, len(app.bufs), 1)
+
+	for n, i in app.tree do if n.name == "b.txt" do app.panel_sel = i
+	panel_input(.Rename_File, "b.txt")
+	submit_file_op("c.txt")
+	testing.expect(t, os.exists(pj(root, "sub/a/c.txt")) && !os.exists(pj(root, "sub/a/b.txt")), "renamed")
+	testing.expect_value(t, app.bufs[0].path, pj(root, "sub/a/c.txt"))
+
+	testing.expect(t, move_to_trash(pj(root, "sub/a/c.txt")), "trash")
+	testing.expect(t, os.exists(pj(root, "data/Trash/files/c.txt")) && os.exists(pj(root, "data/Trash/info/c.txt.trashinfo")), "in trash with info")
+	os.remove_all(root)
+}

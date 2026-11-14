@@ -1,0 +1,61 @@
+# Seoritsu
+
+半透明のコードエディタ。純 Odin で Wayland を直接たたく（GTK/SDL/GPU なし）。
+Wayland・描画層は Ame-FileManager（`~/AmeFileManger/src/gui/`）から複製したもの。
+
+## Zed から借りるもの
+
+インストール済みの Zed（ネイティブ版 `~/.local/share/zed`、無ければ Flatpak 版 `~/.var/app/dev.zed.Zed`）を読む：
+
+- **settings.json** — `experimental.theme_overrides`（色・透過・`syntax`・`players`）、`buffer_font_family` / `buffer_font_size` / `ui_font_size`、
+  `autosave`、`format_on_save`、`diagnostics.inline`、`lsp.<名前>.binary / initialization_options / settings`
+- **拡張機能** — `extensions/installed/*/extension.toml` の言語サーバー定義、`languages/*/config.toml`（拡張子・コメント・hard_tabs）、
+  `highlights.scm` のキーワード
+- **言語サーバー本体** — Zed がダウンロード済みのもの（`extensions/work/<拡張>/`、`languages/<名前>/`）、無ければ `PATH`
+
+設定が無ければ、GitHub Dark 系の透過テーマ（エディタ 72%、パネル 65%）がデフォルト。
+
+## 機能
+
+- **LSP**（Zed がダウンロード済みのサーバー）：診断（波線・行末・ガター・ミニマップ）、セマンティックハイライト、補完、
+  ホバー、引数のヒント、インレイヒント、定義へ、参照、名前の変更（複数ファイル）、コードアクション、シンボル、
+  保存時フォーマット。差分だけ送る同期で大きいファイルも軽い
+- **編集**：マルチカーソル（Ctrl+D / Ctrl+Shift+L / Alt+クリック / Ctrl+Alt+↑↓、コピペは 1 行 1 カーソル）、
+  括弧の自動補完と対応表示、同じ単語のハイライト、行の移動・複製・削除、行コメント、自動インデント、IME
+- **移動・検索**：ファイル検索、コマンドパレット、プロジェクト全体検索（ripgrep）、検索・置換、行へ移動、戻る/進む
+- **その他**：git の変更をガターに表示、ミニマップ、セッション復元（開いていたタブとカーソル）、
+  外部で変更されたファイルの再読み込み、Zed の autosave
+
+## 軽さ（実測）
+
+| | |
+|---|---|
+| メモリ | 16 MB（2,500 行の Odin ファイル）、43 MB（20 万行・6.7 MB） |
+| 起動にかかる CPU 時間 | 0.05 秒（20 万行で 0.2 秒） |
+| 待機中の CPU | ほぼ 0%（点滅なし・タイマー駆動なし。入力が来た時だけ描画） |
+| バイナリ | 約 750 KB |
+
+## キー
+
+コマンドはすべて Ctrl+Shift+P（コマンドパレット）からショートカット付きで探せます。
+
+| キー | |
+|---|---|
+| Ctrl+P / Ctrl+Shift+P / Ctrl+Shift+F | ファイル / コマンド / プロジェクト内検索 |
+| Ctrl+F / Ctrl+H / Ctrl+G | 検索 / 置換（Ctrl+Enter ですべて） / 行へ移動 |
+| Ctrl+D / Ctrl+Shift+L / Alt+クリック | 次の一致を追加 / すべての一致 / カーソル追加 |
+| F12 / Shift+F12 / F2 / Ctrl+. | 定義 / 参照 / 名前変更 / コードアクション |
+| Ctrl+Shift+O / Ctrl+Shift+M / Ctrl+K | シンボル / 診断一覧 / ホバー |
+| Alt+← / Alt+→ | 戻る / 進む |
+| Alt+↑↓ / Ctrl+Shift+D / Ctrl+Shift+K | 行の移動 / 複製 / 削除 |
+| Ctrl+Alt+M / Ctrl+B | ミニマップ / プロジェクトパネル |
+
+## ビルド
+
+```sh
+./build.sh        # ./seoritsu
+./build.sh test   # + テスト
+./seoritsu [フォルダ or ファイル…]
+```
+
+終了時やフォーカスが外れた時、Zed の `autosave` が有効なら保存。無効なら未保存分を `<ファイル>.unsaved` に書き出す。

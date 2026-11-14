@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Seoritsu
+GenericName=Code Editor
+GenericName[ja]=コードエディタ
+Comment=Translucent code editor using Zed's language servers
+Comment[ja]=Zed の言語サーバーが使える半透明のコードエディタ
+Exec=seoritsu %F
+Icon=seoritsu
+Terminal=false
+Categories=Development;TextEditor;IDE;
+MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-rust;text/x-go;text/x-python;text/x-shellscript;text/markdown;application/json;application/toml;application/javascript;application/x-zerosize;inode/directory;
+StartupNotify=true
+StartupWMClass=seoritsu
+Keywords=editor;code;text;zig;odin;lsp;

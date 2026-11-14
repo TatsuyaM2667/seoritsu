@@ -1,0 +1,2 @@
+tree-sitter v0.25.10 lib (MIT, see LICENSE). wasm_store.c is replaced by ../../wasm/ts_wasm_store.c,
+which runs grammars on our own interpreter (../../wasm/wasm.zig) instead of wasmtime.

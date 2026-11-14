@@ -206,13 +206,7 @@ panel_key :: proc(ev: Ev) {
 			toast(fmt.tprintf("もう一度押すと %s をゴミ箱へ移動します", n.name))
 			return
 		}
-		if move_to_trash(n.path) {
-			close_buffers_under(n.path)
-			toast(fmt.tprintf("%s をゴミ箱へ移動しました", n.name))
-			refresh_tree()
-		} else {
-			toast(fmt.tprintf("ゴミ箱へ移動できませんでした: %s", n.name))
-		}
+		trash_with_toast(n.path)
 	}
 	delete(app.trash_armed)
 	app.trash_armed = ""
@@ -289,7 +283,7 @@ submit_file_op :: proc(name: string) {
 // Open tabs follow a moved / renamed file (or everything under a moved folder).
 retarget_buffers :: proc(old, new: string) {
 	for b in app.bufs {
-		if b.path != old && !strings.has_prefix(b.path, strings.concatenate({old, "/"}, context.temp_allocator)) do continue
+		if !is_under(b.path, old) do continue
 		lsp_close(b)
 		np := strings.concatenate({new, b.path[len(old):]})
 		delete(b.path)
@@ -301,7 +295,7 @@ retarget_buffers :: proc(old, new: string) {
 close_buffers_under :: proc(path: string) {
 	for i := len(app.bufs) - 1; i >= 0; i -= 1 {
 		b := app.bufs[i]
-		if b.path != path && !strings.has_prefix(b.path, strings.concatenate({path, "/"}, context.temp_allocator)) do continue
+		if !is_under(b.path, path) do continue
 		b.dirty = false // the file is in the trash now; nothing to keep
 		close_tab(i)
 	}
@@ -322,7 +316,7 @@ move_to_trash :: proc(path: string) -> bool {
 	now := time.now()
 	y, mo, d := time.date(now)
 	h, mi, s := time.clock(now)
-	ti := fmt.tprintf("[Trash Info]\nPath=%s\nDeletionDate=%04d-%02d-%02dT%02d:%02d:%02d\n", path, y, int(mo), d, h, mi, s)
+	ti := fmt.tprintf("[Trash Info]\nPath=%s\nDeletionDate=%04d-%02d-%02dT%02d:%02d:%02d\n", uri(path)[len("file://"):], y, int(mo), d, h, mi, s)
 	ip := pj(info, strings.concatenate({name, ".trashinfo"}, context.temp_allocator))
 	if os.write_entire_file(ip, transmute([]u8)ti) != nil do return false
 	if os.rename(path, pj(files, name)) != nil { // shortcut: no cross-filesystem trash ($topdir/.Trash), the file just stays
@@ -338,9 +332,7 @@ move_to_trash :: proc(path: string) -> bool {
 TERMINALS :: []string{"kuraokami", "ghostty", "foot", "kitty", "alacritty", "wezterm", "konsole", "gnome-terminal", "xterm"}
 
 terminal_pref_path :: proc() -> string {
-	dir := os.get_env("XDG_STATE_HOME", context.temp_allocator)
-	if dir == "" do dir = pj(os.get_env("HOME", context.temp_allocator), ".local/state")
-	return pj(dir, "seoritsu/terminal")
+	return pj(state_dir(), "terminal")
 }
 
 // The saved choice if it is still installed, else the first installed one.

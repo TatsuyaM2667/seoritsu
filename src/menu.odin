@@ -183,6 +183,10 @@ close_tabs :: proc(should_close: proc(i: int) -> bool) {
 
 trash_with_toast :: proc(path: string) {
 	name := filepath.base(path)
+	for b in app.bufs do if b.dirty && is_under(b.path, path) {
+		toast(fmt.tprintf("%s に未保存の変更があります。保存するか閉じてから移動してください", filepath.base(b.path)))
+		return
+	}
 	if move_to_trash(path) {
 		close_buffers_under(path)
 		toast(fmt.tprintf("%s をゴミ箱へ移動しました", name))

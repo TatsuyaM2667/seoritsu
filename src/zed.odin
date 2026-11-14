@@ -464,8 +464,24 @@ resolve_server :: proc(name: string) -> (cmd: Server_Cmd, ok: bool) {
 	return cmd, true
 }
 
+// ~/.local/state/seoritsu (or $XDG_STATE_HOME/seoritsu), created on demand.
+state_dir :: proc() -> string {
+	dir := os.get_env("XDG_STATE_HOME", context.temp_allocator)
+	if dir == "" do dir = pj(os.get_env("HOME", context.temp_allocator), ".local/state")
+	dir = pj(dir, "seoritsu")
+	os.make_directory_all(dir)
+	return dir
+}
+
+// p is dir itself or something inside it.
+is_under :: proc(p, dir: string) -> bool {
+	return p == dir || strings.has_prefix(p, strings.concatenate({strings.trim_suffix(dir, "/"), "/"}, context.temp_allocator))
+}
+
 find_in_path :: proc(name: string) -> string {
 	for d in strings.split(os.get_env("PATH", context.temp_allocator), ":", context.temp_allocator) {
+		// relative entries ("", ".") would run a same-named program from the opened project
+		if !strings.has_prefix(d, "/") do continue
 		p := pj(d, name)
 		if is_exe(p) do return strings.clone(p)
 	}

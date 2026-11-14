@@ -65,11 +65,7 @@ check_external_changes :: proc() {
 
 @(private = "file")
 session_path :: proc() -> string {
-	dir := os.get_env("XDG_STATE_HOME", context.temp_allocator)
-	if dir == "" do dir = pj(os.get_env("HOME", context.temp_allocator), ".local/state")
-	dir = pj(dir, "seoritsu")
-	os.make_directory_all(dir)
-	return pj(dir, fmt.tprintf("%x.session", hash.fnv64a(transmute([]u8)project_root)))
+	return pj(state_dir(), fmt.tprintf("%x.session", hash.fnv64a(transmute([]u8)project_root)))
 }
 
 session_save :: proc() {

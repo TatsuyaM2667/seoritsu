@@ -115,6 +115,7 @@ const Reader = struct {
 pub const Dylink = extern struct { memory_size: u32, memory_align: u32, table_size: u32, table_align: u32 };
 
 const STACK_SIZE: u32 = 256 * 1024;
+const MAX_HEIGHT: u32 = 4000; // < the 4096 slots call() reserves above the locals
 const PAGE: u32 = 65536;
 
 fn alignUp(x: u32, a: u32) u32 {
@@ -265,6 +266,7 @@ fn load(input: []const u8, lang_name: []const u8, out_lang: *u32, out_dylink: *D
                         if (cnt > 50000) return error.Invalid;
                         try lt.appendNTimes(A, t, cnt);
                     }
+                    if (lt.items.len > 50000) return error.Invalid; // many small groups add up
                     f.local_types = lt.items;
                     f.nlocals = @intCast(lt.items.len);
                     f.body = fb[fr.i..];
@@ -543,6 +545,8 @@ fn compile(inst: *Inst, f: *Func) Err!void {
     try ctl.append(A, .{ .loop = false, .is_if = false, .start_pc = 0, .height = 0, .nparams = 0, .nresults = @intCast(ty.results.len), .patches = .empty, .br_patches = .empty, .else_ins = null, .unreachable_ = false });
 
     while (ctl.items.len > 0) {
+        // the interpreter reserves 4096 operand slots per frame: deeper (or underflowed, wrapped) heights are rejected
+        if (h > MAX_HEIGHT) return error.Invalid;
         const pc_here: u32 = @intCast(code.items.len);
         const op = try s.byte();
         const top = &ctl.items[ctl.items.len - 1];
@@ -552,8 +556,8 @@ fn compile(inst: *Inst, f: *Func) Err!void {
         switch (op) {
             0x02, 0x03, 0x04 => {
                 const bt = try blockType(inst, &s);
-                if (op == 0x04 and !dead) h -= 1; // condition
-                var c = Ctl{ .loop = op == 0x03, .is_if = op == 0x04, .start_pc = pc_here, .height = if (dead) 0 else h - bt.p, .nparams = bt.p, .nresults = bt.r, .patches = .empty, .br_patches = .empty, .else_ins = null, .unreachable_ = dead, .born_dead = dead };
+                if (op == 0x04 and !dead) h -%= 1; // condition
+                var c = Ctl{ .loop = op == 0x03, .is_if = op == 0x04, .start_pc = pc_here, .height = if (dead) 0 else h -% bt.p, .nparams = bt.p, .nresults = bt.r, .patches = .empty, .br_patches = .empty, .else_ins = null, .unreachable_ = dead, .born_dead = dead };
                 if (op == 0x04 and !dead) {
                     c.else_ins = pc_here;
                     try code.append(A, .{ .op = 0x04 });
@@ -656,7 +660,7 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
         0x01 => {},
         0x0C, 0x0D => {
             const d = try s.u32_();
-            if (op == 0x0D) h -= 1;
+            if (op == 0x0D) h -%= 1;
             const t = try branchInfo(ctl.items, d);
             const target = &ctl.items[ctl.items.len - 1 - d];
             var fop: u16 = op;
@@ -690,7 +694,7 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
         },
         0x0E => {
             const n = try s.u32_();
-            h -= 1;
+            h -%= 1;
             const first: u32 = @intCast(inst.brtables.items.len);
             for (0..n + 1) |_| {
                 const d = try s.u32_();
@@ -711,7 +715,7 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
             const fi = try s.u32_();
             if (fi >= inst.funcs.items.len) return error.Invalid;
             const t = inst.types[inst.funcs.items[fi].type_idx];
-            h = h - @as(u32, @intCast(t.params.len)) + @as(u32, @intCast(t.results.len));
+            h = h -% @as(u32, @intCast(t.params.len)) +% @as(u32, @intCast(t.results.len));
             try code.append(A, .{ .op = 0x10, .a = fi });
         },
         0x11 => {
@@ -719,11 +723,11 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
             _ = try s.u32_(); // table (only one)
             if (ti >= inst.types.len) return error.Invalid;
             const t = inst.types[ti];
-            h = h - 1 - @as(u32, @intCast(t.params.len)) + @as(u32, @intCast(t.results.len));
+            h = h -% 1 -% @as(u32, @intCast(t.params.len)) +% @as(u32, @intCast(t.results.len));
             try code.append(A, .{ .op = 0x11, .a = ti });
         },
         0x1A => {
-            h -= 1;
+            h -%= 1;
             try code.append(A, .{ .op = 0x1A });
         },
         0x1B, 0x1C => {
@@ -731,20 +735,20 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
                 const n = try s.u32_();
                 for (0..n) |_| _ = try s.byte();
             }
-            h -= 2;
+            h -%= 2;
             try code.append(A, .{ .op = 0x1B });
         },
         0x20, 0x21, 0x22 => {
             const li = try s.u32_();
             if (li >= nl) return error.Invalid;
-            if (op == 0x20) h += 1;
-            if (op == 0x21) h -= 1;
+            if (op == 0x20) h +%= 1;
+            if (op == 0x21) h -%= 1;
             try code.append(A, .{ .op = op, .a = li });
         },
         0x23, 0x24 => {
             const gi = try s.u32_();
             if (gi >= inst.globals.items.len) return error.Invalid;
-            if (op == 0x23) h += 1 else h -= 1;
+            if (op == 0x23) h +%= 1 else h -%= 1;
             try code.append(A, .{ .op = op, .a = gi });
         },
         0x25 => {
@@ -753,7 +757,7 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
         },
         0x26 => {
             _ = try s.u32_();
-            h -= 2;
+            h -%= 2;
             try code.append(A, .{ .op = 0x26 });
         },
         0x28...0x35 => {
@@ -764,12 +768,12 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
         0x36...0x3E => {
             _ = try s.u32_();
             const off = try s.u32_();
-            h -= 2;
+            h -%= 2;
             try code.append(A, .{ .op = op, .a = off });
         },
         0x3F => {
             _ = try s.byte();
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x3F });
         },
         0x40 => {
@@ -777,24 +781,24 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
             try code.append(A, .{ .op = 0x40 });
         },
         0x41 => {
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x41, .v = @as(u32, @truncate(@as(u64, @bitCast(try s.sleb(32))))) });
         },
         0x42 => {
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x42, .v = @bitCast(try s.sleb(64)) });
         },
         0x43 => {
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x41, .v = std.mem.readInt(u32, (try s.bytes(4))[0..4], .little) });
         },
         0x44 => {
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x42, .v = std.mem.readInt(u64, (try s.bytes(8))[0..8], .little) });
         },
         // comparisons and binary ops pop two, push one
         0x46...0x4F, 0x51...0x66, 0x6A...0x78, 0x7C...0x8A, 0x92...0x98, 0xA0...0xA6 => {
-            h -= 1;
+            h -%= 1;
             const n: u32 = @intCast(code.items.len);
             const i32op = (op >= 0x46 and op <= 0x4F) or (op >= 0x6A and op <= 0x78);
             if (i32op and n >= 2 and label_pc < n - 1 and code.items[n - 2].op == 0x20 and code.items[n - 1].op == 0x41) {
@@ -814,13 +818,13 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
         0x45, 0x50, 0x67...0x69, 0x79...0x7B, 0x8B...0x91, 0x99...0x9F, 0xA7...0xC4 => try code.append(A, .{ .op = op }),
         0xD0 => {
             _ = try s.byte();
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x42, .v = 0 });
         },
         0xD1 => try code.append(A, .{ .op = 0x45 }), // ref.is_null == eqz on our encoding
         0xD2 => {
             const fi = try s.u32_();
-            h += 1;
+            h +%= 1;
             try code.append(A, .{ .op = 0x42, .v = fi + 1 });
         },
         0xFC => {
@@ -830,12 +834,12 @@ fn compileOp(inst: *Inst, code: *std.ArrayList(Ins), ctl: *std.ArrayList(Ctl), s
                 10 => {
                     _ = try s.u32_();
                     _ = try s.u32_();
-                    h -= 3;
+                    h -%= 3;
                     try code.append(A, .{ .op = OP_FC + 10 });
                 },
                 11 => {
                     _ = try s.u32_();
-                    h -= 3;
+                    h -%= 3;
                     try code.append(A, .{ .op = OP_FC + 11 });
                 },
                 else => return error.Unsupported,
@@ -1517,6 +1521,7 @@ fn hRealloc(inst: *Inst, args: []u64) Err!u64 {
     const n = u32v(args[1]);
     const p = try alloc(inst, n);
     if (old != 0 and p != 0) {
+        if (old < 4) return error.Trap;
         try need(inst, old - 4, 4);
         const osz = std.mem.readInt(u32, inst.mem[old - 4 ..][0..4], .little);
         const c = @min(osz, n);
@@ -1597,8 +1602,8 @@ fn hStrncmp(inst: *Inst, args: []u64) Err!u64 {
     const n = u32v(args[2]);
     var i: u32 = 0;
     while (i < n) : (i += 1) {
-        try need(inst, a + i, 1);
-        try need(inst, b + i, 1);
+        try need(inst, @as(u64, a) + i, 1);
+        try need(inst, @as(u64, b) + i, 1);
         const x = inst.mem[a + i];
         const y = inst.mem[b + i];
         if (x != y) return if (x < y) ui32(-1) else 1;
@@ -1617,7 +1622,7 @@ fn hStrncpy(inst: *Inst, args: []u64) Err!u64 {
     while (i < n) : (i += 1) {
         var c: u8 = 0;
         if (!ended) {
-            try need(inst, s + i, 1);
+            try need(inst, @as(u64, s) + i, 1);
             c = inst.mem[s + i];
             if (c == 0) ended = true;
         }

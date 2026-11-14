@@ -6,6 +6,7 @@ package main
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -417,7 +418,12 @@ apply_workspace_edit :: proc(s: ^Server, e: json.Value) -> int {
 	keep := app.active
 	n := 0
 	apply :: proc(s: ^Server, u: string, edits: json.Array, n: ^int) {
-		b := open_file(uri_path(u))
+		p, _ := filepath.abs(uri_path(u), context.temp_allocator)
+		if !is_under(p, project_root) && find_buffer(p) == nil {
+			toast(fmt.tprintf("プロジェクト外のファイルへの編集を無視しました: %s", p))
+			return
+		}
+		b := open_file(p)
 		if b == nil do return
 		apply_text_edits(s, b, edits)
 		n^ += 1
@@ -501,7 +507,11 @@ next_message :: proc(s: ^Server) -> (string, bool) {
 		}
 	}
 	start := hdr_end + 4
-	if length < 0 || len(data) < start + length do return "", false
+	if length < 0 { // malformed header: drop it, or nothing after it is ever read
+		remove_range(&s.rbuf, 0, start)
+		return next_message(s)
+	}
+	if len(data) < start + length do return "", false
 	body := strings.clone(data[start:start + length], context.temp_allocator)
 	remove_range(&s.rbuf, 0, start + length)
 	return body, true

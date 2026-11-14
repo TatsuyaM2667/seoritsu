@@ -1,6 +1,8 @@
 package main
 
 import "core:os"
+import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 
 // Parses with the installed Zed Odin grammar (skipped when it isn't installed),
@@ -75,4 +77,25 @@ menu_items_dispatch :: proc(t: ^testing.T) {
 	testing.expect_value(t, item_key(plain), "Ctrl+W")
 	c := cmd_item("コピー")
 	testing.expect(t, c.cmd > 0 && COMMANDS[c.cmd - 1].name == "コピー", "cmd_item points at its command")
+}
+
+// Every grammar Zed installed must still pass the wasm loader's limits (stack height, locals).
+@(test)
+ts_all_grammars_load :: proc(t: ^testing.T) {
+	root := pj(os.get_env("HOME", context.temp_allocator), ".var/app/dev.zed.Zed/data/zed/extensions/installed", allocator = context.temp_allocator)
+	exts, err := os.read_all_directory_by_path(root, context.temp_allocator)
+	if err != nil do return
+	for e in exts {
+		gs, _ := os.read_all_directory_by_path(pj(e.fullpath, "grammars", allocator = context.temp_allocator), context.temp_allocator)
+		for g in gs {
+			if filepath.ext(g.name) != ".wasm" do continue
+			data, rerr := os.read_entire_file(g.fullpath, context.temp_allocator)
+			if rerr != nil do continue
+			werr: TSWasmError
+			store := ts_wasm_store_new(nil, &werr)
+			name := strings.clone_to_cstring(g.name[:len(g.name) - 5], context.temp_allocator)
+			lang := ts_wasm_store_load_language(store, name, raw_data(data), u32(len(data)), &werr)
+			testing.expectf(t, lang != nil, "%s failed to load: %v", g.name, werr.message)
+		}
+	}
 }

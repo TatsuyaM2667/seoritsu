@@ -129,7 +129,7 @@ unique_name :: proc(dir, name: string) -> string {
 // Moves or copies src into dir. Copies never overwrite; moves refuse to.
 transfer :: proc(src, dir: string, move: bool) -> bool {
 	if !os.exists(src) do return false
-	if dir == src || strings.has_prefix(dir, strings.concatenate({src, "/"}, context.temp_allocator)) {
+	if is_under(dir, src) {
 		toast("フォルダをそれ自身の中へは入れられません")
 		return false
 	}
@@ -207,9 +207,7 @@ panel_clip_key :: proc(ev: Ev) -> bool {
 switch_to: string
 
 recent_file :: proc() -> string {
-	dir := os.get_env("XDG_STATE_HOME", context.temp_allocator)
-	if dir == "" do dir = pj(os.get_env("HOME", context.temp_allocator), ".local/state")
-	return pj(dir, "seoritsu/recent")
+	return pj(state_dir(), "recent")
 }
 
 recent_list :: proc() -> []string {
@@ -308,8 +306,12 @@ branch_picker :: proc() {
 git_switch :: proc(name: string) {
 	if name == "" {
 		prompt_open("新しいブランチ名", 0xe725, "", proc(q: string) {
-			if q == "" do return
-			ok, msg := git_run("switch", "-c", strings.trim_space(q))
+			name := strings.trim_space(q)
+			if name == "" || strings.has_prefix(name, "-") {
+				toast("そのブランチ名は使えません")
+				return
+			}
+			ok, msg := git_run("switch", "-c", name)
 			toast(fmt.tprintf("ブランチ %s を作成しました", q) if ok else msg)
 			after_git()
 		})

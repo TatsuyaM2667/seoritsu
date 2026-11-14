@@ -87,3 +87,28 @@ file_transfer :: proc(t: ^testing.T) {
 	app.panel_on = false
 	os.remove_all(root)
 }
+
+@(test)
+security_helpers :: proc(t: ^testing.T) {
+	testing.expect(t, is_under("/a/b", "/a"), "child")
+	testing.expect(t, is_under("/a", "/a"), "itself")
+	testing.expect(t, !is_under("/ab", "/a"), "sibling with the same prefix")
+	testing.expect(t, is_under("/a/b", "/a/"), "trailing slash")
+
+	// a program in the current folder must not be found through a relative PATH entry
+	dir := "/tmp/seoritsu-path-test"
+	os.make_directory_all(dir)
+	exe := pj(dir, "seoritsu-fake-server")
+	_ = os.write_entire_file(exe, transmute([]u8)string("#!/bin/sh\n"))
+	os.chmod(exe, {.Read_User, .Write_User, .Execute_User})
+	old := os.get_env("PATH", context.temp_allocator)
+	old_wd, _ := os.get_working_directory(context.temp_allocator)
+	os.set_working_directory(dir)
+	os.set_env("PATH", ".::")
+	testing.expect_value(t, find_in_path("seoritsu-fake-server"), "")
+	os.set_env("PATH", dir)
+	testing.expect_value(t, find_in_path("seoritsu-fake-server"), exe)
+	os.set_env("PATH", old)
+	os.set_working_directory(old_wd)
+	os.remove_all(dir)
+}

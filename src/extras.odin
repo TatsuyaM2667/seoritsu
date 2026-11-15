@@ -45,7 +45,7 @@ panel_click :: proc(i: int) {
 }
 
 drag_motion :: proc(x, y: f32) {
-	if panel_press >= 0 && abs(x - press_at.x) + abs(y - press_at.y) > 6 * app.S {
+	if panel_press >= 0 && app.panel_mode == .Files && abs(x - press_at.x) + abs(y - press_at.y) > 6 * app.S {
 		i := panel_press
 		panel_press = -1
 		if i < len(app.tree) do plat_start_drag({app.tree[i].path})
@@ -86,6 +86,7 @@ on_dnd :: proc(ev: Ev) {
 		if len(paths) == 0 do return
 		x, y := dnd_at.x, dnd_at.y
 		if app.panel_on && contains(app.panel, x, y) {
+			if app.panel_mode == .Outline do return
 			dir := drop_dir_at(y)
 			n := 0
 			for p in paths do if transfer(p, dir, ev.button == 2) do n += 1

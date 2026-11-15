@@ -40,6 +40,11 @@ Dump runs: set XDG_STATE_HOME to a scratch dir so they don't touch the user's re
 Display rows: b.disp maps row -> (line, c0) only when soft wrap (Alt+Z) or folds are on; scroll_y counts rows.
 Use row_of / row_info / y_of / vert_rows instead of line arithmetic. Folds are indent-based, dropped when edited inside.
 
+## Panes / terminal / outline
+panes.odin: app.bufs/app.active = focused pane; others in `panes` (empty = single pane). Use all_bufs() for
+"every open file". terminal.odin: pty + VT parser (tests drive term_feed directly). outline.odin: documentSymbol tab.
+Tests: the glyph cache is heap-allocated on purpose (tests' allocators die between tests).
+
 ## Ideas not done yet
-Split panes and embedded terminal (next), wrap/fold not yet checked on screen, vim mode, completion with several carets, codeAction/resolve,
+Vertical (up/down) splits, terminal text selection, several terminals, vim mode, completion with several carets, codeAction/resolve,
 damage-tracked partial redraw.

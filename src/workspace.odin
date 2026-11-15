@@ -116,7 +116,7 @@ draw_breadcrumbs :: proc() {
 // ---------------------------------------------------------------------------
 // Project panel: keyboard focus and file operations (Zed's keys)
 
-PANEL_TOP :: 6 // px above the first row, unscaled
+PANEL_TOP :: PANEL_TABS + 4 // px above the first row (below the tabs), unscaled
 PANEL_ROW :: 26
 
 panel_focus_toggle :: proc() {
@@ -161,6 +161,18 @@ panel_target_dir :: proc() -> string {
 }
 
 panel_key :: proc(ev: Ev) {
+	if app.panel_mode == .Outline { // ↑↓ walk the symbols, Enter jumps
+		n := len(outline.items)
+		switch ev.key {
+		case K_ESCAPE: app.panel_focus = false
+		case K_UP: app.panel_sel = max(app.panel_sel - 1, 0)
+		case K_DOWN: app.panel_sel = min(app.panel_sel + 1, max(n - 1, 0))
+		case K_RETURN, K_KP_ENTER:
+			outline_click(app.panel_sel)
+			app.panel_focus = false
+		}
+		return
+	}
 	app.panel_sel = clamp(app.panel_sel, 0, max(len(app.tree) - 1, 0))
 	has := len(app.tree) > 0
 	shift := .Shift in ev.mods

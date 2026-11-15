@@ -129,3 +129,69 @@ folding_rows :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(b.folds), 0)
 	testing.expect_value(t, row_count(b), 6)
 }
+
+@(test)
+git_hunk_revert :: proc(t: ^testing.T) {
+	dir := "/tmp/seoritsu-hunk-test"
+	os.remove_all(dir)
+	os.make_directory_all(dir)
+	path := pj(dir, "f.txt")
+	_ = os.write_entire_file(path, transmute([]u8)string("one\ntwo\nthree\nfour\n"))
+	git :: proc(dir: string, args: ..string) {
+		cmd := make([dynamic]string, context.temp_allocator)
+		append(&cmd, "git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t")
+		append(&cmd, ..args)
+		_, _, _, _ = os.process_exec({command = cmd[:]}, context.temp_allocator)
+	}
+	git(dir, "init", "-q")
+	git(dir, "add", ".")
+	git(dir, "commit", "-qm", "i")
+	b := ebuf("one\nTWO\nthree\nadded\nfour\n")
+	b.path = path
+	b.cur = {1, 0}
+	git_revert_hunk(b) // changed line
+	testing.expect_value(t, buffer_text(b), "one\ntwo\nthree\nadded\nfour\n")
+	b.cur = {3, 0}
+	git_revert_hunk(b) // added line goes away
+	testing.expect_value(t, buffer_text(b), "one\ntwo\nthree\nfour\n")
+	replace(b, {2, 0}, {3, 0}, "", record = false) // delete "three"
+	b.cur = {2, 0}
+	git_revert_hunk(b) // deleted line comes back
+	testing.expect_value(t, buffer_text(b), "one\ntwo\nthree\nfour\n")
+	os.remove_all(dir)
+}
+
+@(test)
+multi_caret_completion :: proc(t: ^testing.T) {
+	b := ebuf("pri\nfoo pri")
+	b.cur, b.anchor = {0, 3}, {0, 3}
+	append(&b.extra, [2]Pos{{1, 7}, {1, 7}})
+	app.comps, app.shown = nil, nil
+	append(&app.comps, Completion_Item{label = "println", insert = "println"})
+	append(&app.shown, 0)
+	app.comp_sel = 0
+	accept_completion(b)
+	testing.expect_value(t, buffer_text(b), "println\nfoo println")
+}
+
+@(test)
+folds_survive_restart :: proc(t: ^testing.T) {
+	dir := "/tmp/seoritsu-session-test"
+	os.remove_all(dir)
+	os.make_directory_all(dir)
+	os.set_env("XDG_STATE_HOME", pj(dir, "state"))
+	path := pj(dir, "f.odin")
+	_ = os.write_entire_file(path, transmute([]u8)string("a {\n\tb\n}\nc {\n\td\n}\n"))
+	project_root = dir
+	app.bufs, panes, app.panel_on = nil, nil, false
+	b := open_file(path)
+	add_fold(b, 3)
+	session_save()
+	app.bufs = nil
+	session_restore()
+	testing.expect_value(t, len(app.bufs), 1)
+	testing.expect_value(t, len(app.bufs[0].folds), 1)
+	testing.expect_value(t, app.bufs[0].folds[0], Fold{3, 4})
+	app.bufs = nil
+	os.remove_all(dir)
+}

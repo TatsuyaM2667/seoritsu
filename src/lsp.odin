@@ -12,7 +12,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 
-Req_Kind :: enum {Initialize, Tokens, Completion, Hover, Definition, Format, Rename, References, Code_Action, Execute, Signature, Inlay, Symbols}
+Req_Kind :: enum {Initialize, Tokens, Completion, Hover, Definition, Format, Rename, References, Code_Action, Execute, Signature, Inlay, Symbols, Outline}
 Req :: struct {
 	kind:    Req_Kind,
 	buf:     ^Buffer,
@@ -291,6 +291,10 @@ lsp_saved :: proc(b: ^Buffer) {
 lsp_tick :: proc(b: ^Buffer) {
 	lsp_sync(b)
 	s := lsp_for(b)
+	if s != nil && s.ready && outline_wanted(b) {
+		outline.pending = true
+		request(s, .Outline, b, "textDocument/documentSymbol", fmt.tprintf(`{{"textDocument":%s}}`, doc(b)))
+	}
 	if s == nil || !s.ready || (!s.can_tokens && !s.can_inlay) || b.toks_due == 0 || ticks_ms() < b.toks_due do return
 	b.toks_due = 0
 	if s.can_tokens do request(s, .Tokens, b, "textDocument/semanticTokens/full", fmt.tprintf(`{{"textDocument":%s}}`, doc(b)))
@@ -698,6 +702,13 @@ handle :: proc(s: ^Server, v: json.Value) {
 		items := make([dynamic]Pick)
 		add_symbols(s, b, result, 0, &items)
 		picker_open(.List, "シンボル", items)
+	case .Outline:
+		outline.pending = false
+		b := req.buf
+		if !buffer_alive(b) do return
+		items := make([dynamic]Pick)
+		add_symbols(s, b, result, 0, &items)
+		outline_set(b, req.version, items)
 	case .Code_Action:
 		acts, _ := result.(json.Array)
 		if len(acts) == 0 {

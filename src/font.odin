@@ -4,6 +4,7 @@ package main
 // chains, the code font (Zed's buffer_font_family) and the UI font, each with
 // a CJK and a Nerd-symbols fallback.
 
+import "base:runtime"
 import "core:c"
 import "core:os"
 import "core:strings"
@@ -153,6 +154,8 @@ set_size :: proc(face: FT_Face, size: i32) {
 get_glyph :: proc(r: rune, size: i32, ui := false) -> Glyph {
 	key := u64(r) | u64(size) << 32 | (u64(1) << 63 if ui else 0)
 	if g, ok := cache[key]; ok do return g
+	// the cache lives for the whole process, whatever allocator the caller runs under
+	context.allocator = runtime.heap_allocator()
 	g: Glyph
 	faces := &chain[1 if ui else 0]
 	pick: FT_Face

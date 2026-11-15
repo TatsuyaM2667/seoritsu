@@ -162,6 +162,9 @@ editor_menu :: proc(x, y: f32) {
 		cmd_item("コピー"),
 		cmd_item("貼り付け"),
 		cmd_item("行コメントの切替", sep = true),
+		cmd_item("git: この変更を元に戻す"),
+		cmd_item("折りたたむ"),
+		cmd_item("展開する"),
 		{label = "プロジェクトパネルで表示", run = proc() {app.panel_on = true; panel_reveal(menu.path)}, sep = true},
 		{label = "外部ターミナルで開く", run = proc() {open_terminal(dir_of(menu.path))}},
 	}, b.path)

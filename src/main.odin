@@ -38,6 +38,7 @@ app: struct {
 	selecting:               bool,
 	panel_on:                bool,
 	panel_scroll:            f32,
+	panel_mode:              Panel_Mode, // files or outline
 	panel_focus:             bool, // arrow keys / a / r / Delete act on the project panel
 	panel_sel:               int,
 	panel_target:            string, // file op in progress: folder (new) or path (rename)
@@ -517,8 +518,20 @@ toggle_comment :: proc(b: ^Buffer) {
 	b.cur, b.anchor = clamp_pos(b, b.cur), clamp_pos(b, b.anchor)
 }
 
+comp_text: string
+
 accept_completion :: proc(b: ^Buffer) {
 	c := app.comps[app.shown[app.comp_sel]]
+	if len(b.extra) > 0 { // every caret completes its own word with the same item
+		comp_text = c.insert
+		each_caret(b, proc(b: ^Buffer) {
+			a, _ := word_at(b, b.cur)
+			if a.line != b.cur.line || a.col > b.cur.col do a = b.cur
+			go(b, replace(b, a, b.cur, comp_text), false)
+		})
+		app.comp_on = false
+		return
+	}
 	a, z := word_at(b, b.cur)
 	z = b.cur
 	if c.has_range && c.a.line == b.cur.line {
@@ -626,6 +639,7 @@ on_mouse :: proc(ev: Ev) {
 		term.focus = false
 		if ev.button == 3 && app.mode == .Edit {
 			if app.panel_on && contains(app.panel, x, y) {
+				if app.panel_mode == .Outline do return
 				app.panel_focus = true
 				panel_menu(x, y, int((y - app.panel.y - PANEL_TOP * S + app.panel_scroll) / (PANEL_ROW * S)) if y > app.panel.y + PANEL_TOP * S else -1)
 			} else if contains(app.tabbar, x, y) {
@@ -675,6 +689,10 @@ on_mouse :: proc(ev: Ev) {
 		if app.panel_on && contains(app.panel, x, y) {
 			app.panel_focus = true
 			i := int((y - app.panel.y - PANEL_TOP * S + app.panel_scroll) / (PANEL_ROW * S))
+			if app.panel_mode == .Outline {
+				if ev.button == 1 && y > app.panel.y + PANEL_TOP * S do outline_click(i)
+				return
+			}
 			if ev.button == 1 && y > app.panel.y + PANEL_TOP * S && i >= 0 && i < len(app.tree) {
 				app.panel_sel = i
 				panel_press, press_at = i, {x, y} // click on release, drag on motion
@@ -1173,6 +1191,11 @@ draw_panel :: proc() {
 	r := app.panel
 	fill(r, col("panel.background"))
 	fill({r.x + r.w - 1, r.y, 1, r.h}, col("border"))
+	draw_panel_tabs()
+	if app.panel_mode == .Outline {
+		draw_outline()
+		return
+	}
 	top := r.y + PANEL_TOP * S
 	set_clip({r.x, top, r.w, r.h - PANEL_TOP * S})
 	rh := PANEL_ROW * S
@@ -1441,6 +1464,7 @@ main :: proc() {
 		hover_wait := !app.hover_asked && contains(app.text, app.mx, app.my)
 		if hover_wait || app.toast != "" || len(app.saving) > 0 || dump != "" || app.search_due != 0 do timeout = 100
 		if b := cur_buf(); b != nil && b.toks_due > 0 do timeout = 50
+		if b := cur_buf(); b != nil && app.panel_on && app.panel_mode == .Outline && (outline.buf != b || outline.version != b.version) do timeout = 100
 		if b := cur_buf(); b != nil && b.ts_dirty do timeout = 0 // keep parsing in slices
 		alive, redraw, timed_out := plat_wait(timeout, fds[:])
 		if !alive do break

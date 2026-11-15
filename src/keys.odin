@@ -38,6 +38,7 @@ COMMANDS := [?]Cmd {
 	{"次のタブ", K_TAB, {.Ctrl}, proc(b: ^Buffer) {cycle_tab(1)}, false},
 	{"前のタブ", K_ISO_LEFT_TAB, {.Ctrl, .Shift}, proc(b: ^Buffer) {cycle_tab(-1)}, false},
 	{"プロジェクトパネルの表示切替", 'b', {.Ctrl}, proc(b: ^Buffer) {app.panel_on = !app.panel_on; app.panel_focus = false}, false},
+	{"アウトラインの表示切替", 'b', {.Ctrl, .Shift}, proc(b: ^Buffer) {outline_toggle()}, false},
 	{"プロジェクトパネルにフォーカス", 'e', {.Ctrl, .Shift}, proc(b: ^Buffer) {term.focus = false; panel_focus_toggle()}, false},
 	{"ターミナルの表示切替", '`', {.Ctrl}, proc(b: ^Buffer) {term_toggle()}, false},
 	{"外部ターミナルを開く", 0, {}, proc(b: ^Buffer) {open_terminal()}, false},
@@ -52,6 +53,7 @@ COMMANDS := [?]Cmd {
 	{"git: すべてステージしてコミット", 0, {}, proc(b: ^Buffer) {git_commit_prompt()}, false},
 	{"git: プッシュ", 0, {}, proc(b: ^Buffer) {git_push()}, false},
 	{"git: プル", 0, {}, proc(b: ^Buffer) {git_pull()}, false},
+	{"git: この変更を元に戻す", 0, {}, proc(b: ^Buffer) {git_revert_hunk(b)}, true},
 	{"ミニマップの表示切替", 'm', {.Ctrl, .Alt}, proc(b: ^Buffer) {app.minimap = !app.minimap}, false},
 	{"折り返しの切替", 'z', {.Alt}, proc(b: ^Buffer) {app.wrap = !app.wrap; if b != nil do ensure_visible(b)}, false},
 	{"折りたたむ", '{', {.Ctrl, .Shift}, proc(b: ^Buffer) {fold_here(b)}, true},
@@ -279,7 +281,6 @@ after_typing :: proc(b: ^Buffer, s: string) {
 		lsp_signature(b)
 	}
 	if s == ")" do app.sig = ""
-	if len(b.extra) > 0 do return // completion with several carets: not supported
 	srv := lsp_for(b)
 	if srv == nil || !srv.ready do return
 	trigger := slice.contains(srv.triggers[:], s)

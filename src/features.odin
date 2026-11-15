@@ -71,7 +71,12 @@ session_path :: proc() -> string {
 session_save :: proc() {
 	sb := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&sb, "%d\n", app.active)
-	for b in all_bufs() do fmt.sbprintf(&sb, "%d\t%d\t%d\t%s\n", b.cur.line, b.cur.col, int(b.scroll_y), b.path)
+	for b in all_bufs() {
+		// line, col, scroll, folded header lines, path
+		fmt.sbprintf(&sb, "%d\t%d\t%d\t", b.cur.line, b.cur.col, int(b.scroll_y))
+		for f, i in b.folds do fmt.sbprintf(&sb, "%s%d", "," if i > 0 else "", f.line)
+		fmt.sbprintf(&sb, "\t%s\n", b.path)
+	}
 	_ = os.write_entire_file(session_path(), transmute([]u8)strings.to_string(sb))
 }
 
@@ -81,10 +86,15 @@ session_restore :: proc() {
 	lines := strings.split_lines(string(data), context.temp_allocator)
 	active, _ := strconv.parse_int(lines[0])
 	for l in lines[1:] {
-		f := strings.split_n(l, "\t", 4, context.temp_allocator)
-		if len(f) < 4 || !os.exists(f[3]) do continue
-		b := open_file(f[3])
+		f := strings.split_n(l, "\t", 5, context.temp_allocator)
+		if len(f) < 4 do continue
+		path := f[4] if len(f) == 5 else f[3] // older sessions had no folds column
+		if !os.exists(path) do continue
+		b := open_file(path)
 		if b == nil do continue
+		if len(f) == 5 do for s in strings.split(f[3], ",", context.temp_allocator) {
+			if fl, ok := strconv.parse_int(s); ok do add_fold(b, fl)
+		}
 		ln, _ := strconv.parse_int(f[0])
 		cl, _ := strconv.parse_int(f[1])
 		sy, _ := strconv.parse_int(f[2])
@@ -226,4 +236,89 @@ draw_minimap :: proc(b: ^Buffer) {
 		if l >= 0 && l < n do fill({r.x + mw - 3 * S, r.y + f32(l) * lh, 3 * S, lh}, diag_color(d.severity))
 	}
 	reset_clip()
+}
+
+// ---------------------------------------------------------------------------
+// git: put the hunk under the caret back to HEAD (one undo step), like Zed's git::Restore.
+// Diffs the buffer as it is now (not the file on disk), so unsaved edits count.
+
+Hunk :: struct {
+	new_start, new_n: int, // 0-based first line in the buffer, line count
+	old:              []string,
+}
+
+buffer_hunks :: proc(b: ^Buffer) -> (hunks: [dynamic]Hunk, ok: bool) {
+	hunks = make([dynamic]Hunk, context.temp_allocator)
+	dir := filepath.dir(b.path)
+	st, head, _, err := os.process_exec({command = {"git", "-C", dir, "show", strings.concatenate({"HEAD:./", filepath.base(b.path)}, context.temp_allocator)}}, context.temp_allocator)
+	if err != nil || st.exit_code != 0 do return
+	oldp, newp := pj(state_dir(), "hunk-head"), pj(state_dir(), "hunk-buffer")
+	defer {os.remove(oldp); os.remove(newp)}
+	if os.write_entire_file(oldp, head) != nil || os.write_entire_file(newp, transmute([]u8)buffer_text(b)) != nil do return
+	_, out, _, derr := os.process_exec({command = {"git", "diff", "--no-index", "-U0", "--no-color", "--no-ext-diff", oldp, newp}}, context.temp_allocator)
+	if derr != nil do return
+	cur := -1 // index, not a pointer: appending may move the array
+	old := make([dynamic]string, context.temp_allocator)
+	for line in strings.split_lines(string(out), context.temp_allocator) {
+		if strings.has_prefix(line, "@@ ") {
+			if cur >= 0 do hunks[cur].old = old[:]
+			old = make([dynamic]string, context.temp_allocator)
+			f := strings.fields(line, context.temp_allocator)
+			if len(f) < 3 do continue
+			ns, nn := 1, 1
+			s := f[2][1:]
+			if i := strings.index_byte(s, ','); i >= 0 {
+				nn, _ = strconv.parse_int(s[i + 1:])
+				s = s[:i]
+			}
+			ns, _ = strconv.parse_int(s)
+			// "+ns,0": nothing left in the buffer; the old lines belong after line ns
+			append(&hunks, Hunk{new_start = ns if nn == 0 else ns - 1, new_n = nn})
+			cur = len(hunks) - 1
+		} else if cur >= 0 && strings.has_prefix(line, "-") && !strings.has_prefix(line, "---") {
+			append(&old, line[1:])
+		}
+	}
+	if cur >= 0 do hunks[cur].old = old[:]
+	return hunks, true
+}
+
+git_revert_hunk :: proc(b: ^Buffer) {
+	hunks, ok := buffer_hunks(b)
+	if !ok {
+		toast("git の前の版がありません (新しいファイルか、リポジトリの外です)")
+		return
+	}
+	l := b.cur.line
+	for h in hunks {
+		hit := l >= h.new_start && l < h.new_start + h.new_n
+		if h.new_n == 0 do hit = l == h.new_start || l == h.new_start - 1 // the deleted-lines wedge
+		if !hit do continue
+		old := strings.join(h.old, "\n", context.temp_allocator)
+		last := len(b.lines) - 1
+		a, z: Pos
+		text: string
+		switch {
+		case h.new_n == 0: // deleted lines come back
+			if h.new_start <= last {
+				a, z, text = {h.new_start, 0}, {h.new_start, 0}, strings.concatenate({old, "\n"}, context.temp_allocator)
+			} else {
+				a, z, text = {last, len(b.lines[last])}, {last, len(b.lines[last])}, strings.concatenate({"\n", old}, context.temp_allocator)
+			}
+		case len(h.old) == 0: // added lines go away, with their line breaks
+			e := h.new_start + h.new_n
+			if e <= last do a, z = {h.new_start, 0}, {e, 0}
+			else if h.new_start > 0 do a, z = {h.new_start - 1, len(b.lines[h.new_start - 1])}, {last, len(b.lines[last])}
+			else do a, z = {0, 0}, {last, len(b.lines[last])}
+		case: // changed lines get their old text
+			e := min(h.new_start + h.new_n - 1, last)
+			a, z, text = {h.new_start, 0}, {e, len(b.lines[e])}, old
+		}
+		clear(&b.extra)
+		replace(b, a, z, text)
+		go(b, clamp_pos(b, {h.new_start, 0}), false)
+		toast("変更を HEAD の内容に戻しました")
+		return
+	}
+	toast("カーソルの行に git の変更はありません")
 }

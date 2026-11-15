@@ -114,7 +114,7 @@ panel_menu :: proc(x, y: f32, row: int) {
 			{label = "新しいファイル", key = "A", run = proc() {panel_input(.New_File, "")}},
 			{label = "新しいフォルダ", key = "Shift+A", run = proc() {panel_input(.New_Dir, "")}},
 			{label = "ファイルマネージャで表示", run = proc() {reveal_in_file_manager(menu.path)}, sep = true},
-			{label = "ここでターミナルを開く", run = proc() {open_terminal(dir_of(menu.path))}},
+			{label = "外部ターミナルで開く", run = proc() {open_terminal(dir_of(menu.path))}},
 			{label = "コピー", key = "Ctrl+C", run = proc() {panel_copy(menu.path, false)}, sep = true},
 			{label = "切り取り", key = "Ctrl+X", run = proc() {panel_copy(menu.path, true)}},
 			{label = "貼り付け", key = "Ctrl+V", run = proc() {panel_paste()}},
@@ -132,7 +132,7 @@ panel_menu :: proc(x, y: f32, row: int) {
 			{label = "新しいフォルダ", key = "Shift+A", run = proc() {panel_input(.New_Dir, "")}},
 			{label = "貼り付け", key = "Ctrl+V", run = proc() {panel_paste()}},
 			{label = "ファイルマネージャで表示", run = proc() {reveal_in_file_manager(project_root)}, sep = true},
-			{label = "ここでターミナルを開く", run = proc() {open_terminal(project_root)}},
+			{label = "外部ターミナルで開く", run = proc() {open_terminal(project_root)}},
 		}, project_root)
 	}
 }
@@ -163,7 +163,7 @@ editor_menu :: proc(x, y: f32) {
 		cmd_item("貼り付け"),
 		cmd_item("行コメントの切替", sep = true),
 		{label = "プロジェクトパネルで表示", run = proc() {app.panel_on = true; panel_reveal(menu.path)}, sep = true},
-		{label = "ここでターミナルを開く", run = proc() {open_terminal(dir_of(menu.path))}},
+		{label = "外部ターミナルで開く", run = proc() {open_terminal(dir_of(menu.path))}},
 	}, b.path)
 }
 
@@ -183,7 +183,7 @@ close_tabs :: proc(should_close: proc(i: int) -> bool) {
 
 trash_with_toast :: proc(path: string) {
 	name := filepath.base(path)
-	for b in app.bufs do if b.dirty && is_under(b.path, path) {
+	for b in all_bufs() do if b.dirty && is_under(b.path, path) {
 		toast(fmt.tprintf("%s に未保存の変更があります。保存するか閉じてから移動してください", filepath.base(b.path)))
 		return
 	}

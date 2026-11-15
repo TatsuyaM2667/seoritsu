@@ -32,6 +32,7 @@ app: struct {
 	titlebar, tabbar, crumbs: Rect,
 	editor, gutter:          Rect,
 	text, panel, status:     Rect,
+	tab_h, crumb_h:          f32,
 	// mouse
 	mx, my:                  f32,
 	selecting:               bool,
@@ -88,10 +89,10 @@ SKIP_DIRS :: []string{".git", "node_modules", "target", "zig-cache", ".zig-cache
 
 cur_buf :: proc() -> ^Buffer {return app.bufs[app.active] if app.active < len(app.bufs) else nil}
 
-buffer_alive :: proc(b: ^Buffer) -> bool {return slice.contains(app.bufs[:], b)}
+buffer_alive :: proc(b: ^Buffer) -> bool {return slice.contains(all_bufs(), b)}
 
 find_buffer :: proc(path: string) -> ^Buffer {
-	for b in app.bufs do if b.path == path do return b
+	for b in all_bufs() do if b.path == path do return b
 	return nil
 }
 
@@ -157,6 +158,12 @@ open_file :: proc(path: string) -> ^Buffer {
 		if app.panel_on do panel_reveal(abs)
 		return b
 	}
+	if b := find_buffer(abs); b != nil { // open in another pane: same document, new tab here
+		append(&app.bufs, b)
+		app.active = len(app.bufs) - 1
+		if app.panel_on do panel_reveal(abs)
+		return b
+	}
 	b, ok := buffer_load(abs)
 	if !ok {
 		toast(fmt.tprintf("開けません: %s", path))
@@ -180,10 +187,11 @@ close_tab :: proc(i: int) {
 	}
 	app.close_armed = nil
 	remember_closed(b)
-	lsp_close(b)
+	if !open_elsewhere(b) do lsp_close(b)
 	delete_key(&app.saving, b)
 	ordered_remove(&app.bufs, i)
 	if app.active >= len(app.bufs) do app.active = max(len(app.bufs) - 1, 0)
+	close_pane_if_empty()
 	app.comp_on = false
 }
 
@@ -197,7 +205,7 @@ save :: proc(b: ^Buffer) {
 
 // Zed's "autosave": on focus loss / quit, write what changed.
 autosave_all :: proc() {
-	for b in app.bufs do if b.dirty && os.exists(b.path) do finish_save(b)
+	for b in all_bufs() do if b.dirty && os.exists(b.path) do finish_save(b)
 }
 
 rebuild_tree :: proc() {
@@ -351,11 +359,19 @@ layout :: proc() {
 	pw: f32 = math.round(250 * S) if app.panel_on else 0
 	app.titlebar = {0, 0, app.W, title_h}
 	app.panel = {0, title_h, pw, app.H - title_h - status_h}
-	app.tabbar = {pw, title_h, app.W - pw, tab_h}
-	app.crumbs = {pw, title_h + tab_h, app.W - pw, crumb_h if len(app.bufs) > 0 else 0}
 	app.status = {0, app.H - status_h, app.W, status_h}
+	app.tab_h, app.crumb_h = tab_h, crumb_h
+	term_layout()
+	layout_pane(pane_rect(pane_i))
+}
+
+// Tab bar, breadcrumbs and editor inside one pane's column.
+layout_pane :: proc(r: Rect) {
+	S := app.S
+	app.tabbar = {r.x, r.y, r.w, app.tab_h}
+	app.crumbs = {r.x, r.y + app.tab_h, r.w, app.crumb_h if len(app.bufs) > 0 else 0}
 	top := app.crumbs.y + app.crumbs.h
-	app.editor = {pw, top, app.W - pw, app.H - top - status_h}
+	app.editor = {r.x, top, r.w, r.y + r.h - top}
 	digits := 3
 	if b := cur_buf(); b != nil do digits = max(len(fmt.tprint(len(b.lines))), 3)
 	gw := f32(digits + 4) * app.cell_w // number, diagnostic dot, fold chevron
@@ -553,6 +569,14 @@ delete_line :: proc(b: ^Buffer) {
 	go(b, {min(a.line, len(b.lines) - 1), 0}, false)
 }
 
+wheel_scroll :: proc(ev: Ev) {
+	b := cur_buf()
+	if b == nil do return
+	if .Shift in ev.mods do b.scroll_x = max(b.scroll_x - ev.wheel * 6 * app.cell_w, 0)
+	else do b.scroll_y = clamp(b.scroll_y - ev.wheel * 3, 0, f32(max(row_count(b) - 1, 0)))
+	app.hover = ""
+}
+
 on_mouse :: proc(ev: Ev) {
 	S := app.S
 	x, y := ev.x * S, ev.y * S
@@ -578,15 +602,28 @@ on_mouse :: proc(ev: Ev) {
 	case .Wheel:
 		if app.panel_on && contains(app.panel, x, y) {
 			app.panel_scroll = max(app.panel_scroll - ev.wheel * 3 * PANEL_ROW * S, 0)
-		} else if b != nil {
-			if .Shift in ev.mods do b.scroll_x = max(b.scroll_x - ev.wheel * 6 * app.cell_w, 0)
-			else do b.scroll_y = clamp(b.scroll_y - ev.wheel * 3, 0, f32(max(row_count(b) - 1, 0)))
-			app.hover = ""
+		} else if term_on() && contains(term.rect, x, y) {
+			term_wheel(ev.wheel)
+		} else {
+			scroll_pane(pane_at(x), ev)
 		}
 	case .Down:
 		app.hover = ""
 		if menu_click(x, y) do return
+		if len(panes) > 0 && app.mode == .Edit && y > app.titlebar.h && y < app.status.y && !(app.panel_on && contains(app.panel, x, y)) && !(term_on() && contains(term.rect, x, y)) {
+			if i := pane_at(x); i != pane_i {
+				focus_pane(i)
+				layout_pane(pane_rect(i))
+				b = cur_buf()
+			}
+		}
 		if ev.button == 1 && status_click(x, y) do return
+		if term_on() && contains(term.rect, x, y) {
+			term.focus, app.panel_focus = true, false
+			if ev.button == 2 do term_paste(plat_get_clipboard_text())
+			return
+		}
+		term.focus = false
 		if ev.button == 3 && app.mode == .Edit {
 			if app.panel_on && contains(app.panel, x, y) {
 				app.panel_focus = true
@@ -1197,7 +1234,7 @@ draw_status :: proc() {
 		}
 	}
 	rx := r.w - 6 * S
-	rx -= status_button(rx, 0xf120, "", col("text.muted"), proc() {open_terminal()}, right = true) + 4 * S
+	rx -= status_button(rx, 0xf120, "", col("text.accent") if term.on else col("text.muted"), proc() {term_toggle()}, right = true) + 4 * S
 	if b != nil {
 		lang := b.lang.name if b.lang != nil else "Plain Text"
 		rx -= f32(text_width(lang, sz, true)) + 10 * S
@@ -1289,11 +1326,9 @@ frame :: proc() {
 	clear_canvas({}) // fully transparent: each region paints its own translucent color
 	layout()
 	clear(&status_buttons) // re-registered by whatever draws them this frame
-	app.text_focus = true
-	draw_editor()
+	draw_panes()
+	term_draw()
 	draw_titlebar()
-	draw_tabbar()
-	draw_breadcrumbs()
 	if app.panel_on do draw_panel()
 	draw_drop_target()
 	draw_status()
@@ -1357,7 +1392,7 @@ main :: proc() {
 				}
 			}
 		}
-		for b in app.bufs do if b != cur_buf() && b.lsp_stale do lsp_sync(b)
+		for b in all_bufs() do if b != cur_buf() && b.lsp_stale do lsp_sync(b)
 		for b, deadline in app.saving do if now > deadline {
 			finish_save(b) // formatter too slow: save anyway
 			dirty = true
@@ -1401,6 +1436,7 @@ main :: proc() {
 
 		fds := make([dynamic]posix.FD, context.temp_allocator)
 		lsp_fds(&fds)
+		if term.alive do append(&fds, term.fd)
 		timeout := -1
 		hover_wait := !app.hover_asked && contains(app.text, app.mx, app.my)
 		if hover_wait || app.toast != "" || len(app.saving) > 0 || dump != "" || app.search_due != 0 do timeout = 100
@@ -1409,6 +1445,7 @@ main :: proc() {
 		alive, redraw, timed_out := plat_wait(timeout, fds[:])
 		if !alive do break
 		if lsp_poll() do dirty = true
+		if term_poll() do dirty = true
 		// buffer releases / frame callbacks also wake us: only real input means a redraw
 		if redraw || len(events) > 0 do dirty = true
 		_ = timed_out
@@ -1439,11 +1476,12 @@ main :: proc() {
 		clear(&events)
 	}
 	// quitting: Zed-style autosave, otherwise keep unsaved work next to the file
-	if dump == "" do for b in app.bufs do if b.dirty {
+	if dump == "" do for b in all_bufs() do if b.dirty {
 		if zed.autosave && os.exists(b.path) do buffer_save(b)
 		else do _ = os.write_entire_file(strings.concatenate({b.path, ".unsaved"}), transmute([]u8)buffer_text(b))
 	}
 	if dump == "" do session_save()
 	lsp_shutdown()
+	term_close()
 	exec_switch() // a project switch: start over in the other folder
 }

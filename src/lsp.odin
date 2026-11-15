@@ -597,7 +597,7 @@ handle :: proc(s: ^Server, v: json.Value) {
 		}
 		s.ready = true
 		s.status = ""
-		for b in app.bufs do if lsp_for(b) == s do lsp_open(b)
+		for b in all_bufs() do if lsp_for(b) == s do lsp_open(b)
 	case .Tokens:
 		b := req.buf
 		if !buffer_alive(b) || req.version != b.version do return

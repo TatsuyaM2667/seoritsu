@@ -282,7 +282,7 @@ submit_file_op :: proc(name: string) {
 
 // Open tabs follow a moved / renamed file (or everything under a moved folder).
 retarget_buffers :: proc(old, new: string) {
-	for b in app.bufs {
+	for b in all_bufs() {
 		if !is_under(b.path, old) do continue
 		lsp_close(b)
 		np := strings.concatenate({new, b.path[len(old):]})
@@ -293,6 +293,7 @@ retarget_buffers :: proc(old, new: string) {
 }
 
 close_buffers_under :: proc(path: string) {
+	for b in all_bufs() do if is_under(b.path, path) do remove_from_other_panes(b)
 	for i := len(app.bufs) - 1; i >= 0; i -= 1 {
 		b := app.bufs[i]
 		if !is_under(b.path, path) do continue

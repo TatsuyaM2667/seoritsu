@@ -29,13 +29,18 @@ COMMANDS := [?]Cmd {
 	{"コマンドパレット", 'p', {.Ctrl, .Shift}, proc(b: ^Buffer) {open_palette()}, false},
 	{"プロジェクト内を検索", 'f', {.Ctrl, .Shift}, proc(b: ^Buffer) {open_search()}, false},
 	{"保存", 's', {.Ctrl}, proc(b: ^Buffer) {save(b)}, true},
-	{"すべて保存", 's', {.Ctrl, .Alt}, proc(b: ^Buffer) {for x in app.bufs do if x.dirty do save(x)}, false},
+	{"すべて保存", 's', {.Ctrl, .Alt}, proc(b: ^Buffer) {for x in all_bufs() do if x.dirty do save(x)}, false},
+	{"右に分割", '\\', {.Ctrl}, proc(b: ^Buffer) {split_right()}, false},
+	{"ペインを閉じる", 0, {}, proc(b: ^Buffer) {close_pane()}, false},
+	{"右のペインへ", K_RIGHT, {.Ctrl, .Alt}, proc(b: ^Buffer) {focus_pane(pane_i + 1)}, false},
+	{"左のペインへ", K_LEFT, {.Ctrl, .Alt}, proc(b: ^Buffer) {focus_pane(pane_i - 1)}, false},
 	{"タブを閉じる", 'w', {.Ctrl}, proc(b: ^Buffer) {close_tab(app.active)}, false},
 	{"次のタブ", K_TAB, {.Ctrl}, proc(b: ^Buffer) {cycle_tab(1)}, false},
 	{"前のタブ", K_ISO_LEFT_TAB, {.Ctrl, .Shift}, proc(b: ^Buffer) {cycle_tab(-1)}, false},
 	{"プロジェクトパネルの表示切替", 'b', {.Ctrl}, proc(b: ^Buffer) {app.panel_on = !app.panel_on; app.panel_focus = false}, false},
-	{"プロジェクトパネルにフォーカス", 'e', {.Ctrl, .Shift}, proc(b: ^Buffer) {panel_focus_toggle()}, false},
-	{"ターミナルを開く", '`', {.Ctrl}, proc(b: ^Buffer) {open_terminal()}, false},
+	{"プロジェクトパネルにフォーカス", 'e', {.Ctrl, .Shift}, proc(b: ^Buffer) {term.focus = false; panel_focus_toggle()}, false},
+	{"ターミナルの表示切替", '`', {.Ctrl}, proc(b: ^Buffer) {term_toggle()}, false},
+	{"外部ターミナルを開く", 0, {}, proc(b: ^Buffer) {open_terminal()}, false},
 	{"ターミナルアプリを選ぶ", 0, {}, proc(b: ^Buffer) {choose_terminal()}, false},
 	{"新しいファイル", 'n', {.Ctrl}, proc(b: ^Buffer) {new_file_prompt()}, false},
 	{"フォルダを開く", 'o', {.Ctrl}, proc(b: ^Buffer) {open_folder_prompt()}, false},
@@ -155,6 +160,15 @@ on_key :: proc(ev: Ev) {
 	if menu.on {
 		menu.on = false
 		if ev.key == K_ESCAPE do return
+	}
+	if term.on && term.focus && app.mode == .Edit {
+		switch {
+		case ev.key == '`' && ev.mods == {.Ctrl}: term_toggle()
+		case ev.key == 'p' && ev.mods == {.Ctrl, .Shift}: open_palette()
+		case ev.key == 'v' && ev.mods == {.Ctrl, .Shift}: term_paste(plat_get_clipboard_text())
+		case: term_key(ev)
+		}
+		return
 	}
 	if panel_clip_key(ev) do return
 	b := cur_buf()
@@ -439,6 +453,10 @@ input_changed :: proc(b: ^Buffer) {
 }
 
 on_text :: proc(t: string) {
+	if term.on && term.focus && app.mode == .Edit {
+		term_write(t)
+		return
+	}
 	if app.mode != .Edit {
 		append(field_buf(), t)
 		input_changed(cur_buf())

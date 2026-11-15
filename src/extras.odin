@@ -254,7 +254,7 @@ open_folder_prompt :: proc() {
 // Quits the main loop; main re-executes us in that folder (session, autosave, .unsaved as on quit).
 switch_project :: proc(path: string) {
 	if path == project_root do return
-	if !zed.autosave do for b in app.bufs do if b.dirty {
+	if !zed.autosave do for b in all_bufs() do if b.dirty {
 		toast("未保存のファイルがあります。保存してから切り替えてください")
 		return
 	}
@@ -285,7 +285,7 @@ git_run :: proc(args: ..string) -> (ok: bool, msg: string) {
 
 after_git :: proc() {
 	check_external_changes() // also refreshes the tree and git colors
-	for b in app.bufs do git_refresh(b)
+	for b in all_bufs() do git_refresh(b)
 }
 
 branch_picker :: proc() {

@@ -47,7 +47,7 @@ git_refresh :: proc(b: ^Buffer) {
 // Files changed by other programs: picked up when the window gets focus again
 
 check_external_changes :: proc() {
-	for b in app.bufs {
+	for b in all_bufs() {
 		m := file_mtime(b.path)
 		if m == 0 || m == b.mtime do continue
 		if b.dirty {
@@ -71,7 +71,7 @@ session_path :: proc() -> string {
 session_save :: proc() {
 	sb := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&sb, "%d\n", app.active)
-	for b in app.bufs do fmt.sbprintf(&sb, "%d\t%d\t%d\t%s\n", b.cur.line, b.cur.col, int(b.scroll_y), b.path)
+	for b in all_bufs() do fmt.sbprintf(&sb, "%d\t%d\t%d\t%s\n", b.cur.line, b.cur.col, int(b.scroll_y), b.path)
 	_ = os.write_entire_file(session_path(), transmute([]u8)strings.to_string(sb))
 }
 
